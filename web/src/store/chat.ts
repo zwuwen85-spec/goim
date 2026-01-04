@@ -23,14 +23,14 @@ export const useChatStore = defineStore('chat', () => {
 
   const loadConversations = async () => {
     const response = await conversationApi.getList()
-    if (response.code === 0) {
+    if (response.data.code === 0) {
       conversations.value = response.data.conversations || []
     }
   }
 
   const loadFriends = async () => {
     const response = await friendApi.getFriends()
-    if (response.code === 0) {
+    if (response.data.code === 0) {
       friends.value = response.data.friends || []
     }
   }
@@ -93,7 +93,7 @@ export const useChatStore = defineStore('chat', () => {
       content
     })
 
-    if (response.code === 0) {
+    if (response.data.code === 0) {
       // Add message to current session
       const msg: Message = {
         id: Date.now(),
@@ -122,6 +122,7 @@ export const useChatStore = defineStore('chat', () => {
         targetId: msg.conversation_id,
         targetType: msg.conversation_type === 1 ? 'user' : 'group',
         name: `Chat ${msg.conversation_id}`,
+        unreadCount: 0,
         messages: []
       }
       sessions.value.set(sessionKey, session)

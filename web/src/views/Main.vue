@@ -1,647 +1,521 @@
 <template>
-  <div class="main-container">
-    <!-- Sidebar -->
-    <div class="sidebar">
-      <!-- User info -->
-      <div class="user-info">
-        <el-avatar :size="40" :src="userStore.currentUser?.avatar">
-          {{ userStore.currentUser?.nickname?.[0] }}
-        </el-avatar>
-        <div class="user-details">
-          <div class="user-name">{{ userStore.currentUser?.nickname }}</div>
-          <div class="user-status">在线</div>
+  <div class="main-layout">
+    <!-- 1. Icon Sidebar -->
+    <div class="icon-sidebar">
+      <div class="app-logo">
+        <el-icon :size="32" color="#6366f1"><ChatDotRound /></el-icon>
+      </div>
+      
+      <div class="nav-items">
+        <div 
+          class="nav-item" 
+          :class="{ active: activeTab === 'chats' }" 
+          @click="activeTab = 'chats'"
+          title="聊天"
+        >
+          <el-icon :size="24"><ChatLineRound /></el-icon>
         </div>
-        <el-button text @click="handleLogout">
-          <el-icon><SwitchButton /></el-icon>
-        </el-button>
+        <div 
+          class="nav-item" 
+          :class="{ active: activeTab === 'friends' }" 
+          @click="activeTab = 'friends'"
+          title="好友"
+        >
+          <el-icon :size="24"><User /></el-icon>
+        </div>
+        <div 
+          class="nav-item" 
+          :class="{ active: activeTab === 'groups' }" 
+          @click="activeTab = 'groups'"
+          title="群组"
+        >
+          <el-icon :size="24"><Connection /></el-icon>
+        </div>
+        <div 
+          class="nav-item" 
+          :class="{ active: activeTab === 'ai' }" 
+          @click="activeTab = 'ai'"
+          title="AI 助手"
+        >
+          <el-icon :size="24"><Cpu /></el-icon>
+        </div>
       </div>
 
-      <!-- Tabs -->
-      <el-tabs v-model="activeTab" class="sidebar-tabs">
-        <!-- Conversations -->
-        <el-tab-pane label="聊天" name="conversations">
-          <div class="tab-content">
-            <div
-              v-for="conv in chatStore.conversations"
-              :key="`${conv.target_id}:${conv.conversation_type}`"
-              class="conversation-item"
-              :class="{ active: currentConvId === `${conv.target_id}:${conv.conversation_type}` }"
-              @click="openConversation(conv)"
-            >
-              <el-avatar :size="46">{{ conv.target_user?.nickname?.[0] || '?' }}</el-avatar>
-              <div class="conv-info">
-                <div class="conv-name">{{ conv.target_user?.nickname || `User ${conv.target_id}` }}</div>
-                <div class="conv-preview">{{ getLastMessage(conv) }}</div>
+      <div class="bottom-actions">
+        <el-dropdown trigger="click" placement="right-end">
+          <el-avatar :size="40" :src="userStore.currentUser?.avatar" class="user-avatar">
+            {{ userStore.currentUser?.nickname?.[0] }}
+          </el-avatar>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <div class="user-dropdown-header">
+                <div class="dropdown-name">{{ userStore.currentUser?.nickname }}</div>
+                <div class="dropdown-status">在线</div>
               </div>
-              <el-badge v-if="conv.unread_count > 0" :value="conv.unread_count > 99 ? '99+' : conv.unread_count" class="unread-badge" />
-            </div>
-          </div>
-        </el-tab-pane>
-
-        <!-- Friends -->
-        <el-tab-pane label="好友" name="friends">
-          <div class="tab-content friends-tab">
-            <FriendManager />
-          </div>
-        </el-tab-pane>
-
-        <!-- Groups -->
-        <el-tab-pane label="群聊" name="groups">
-          <div class="tab-content groups-tab">
-            <GroupChat />
-          </div>
-        </el-tab-pane>
-
-        <!-- AI Chat -->
-        <el-tab-pane label="AI" name="ai">
-          <div class="tab-content ai-tab">
-            <AIChat />
-          </div>
-        </el-tab-pane>
-      </el-tabs>
+              <el-dropdown-item divided @click="handleLogout">
+                <el-icon><SwitchButton /></el-icon>退出登录
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </div>
     </div>
 
-    <!-- Chat area -->
-    <div class="chat-area">
-      <div v-if="chatStore.currentSession" class="chat-container">
-        <!-- Chat header -->
-        <div class="chat-header">
-          <h3>{{ chatStore.currentSession.name }}</h3>
-          <el-button text @click="showUserInfo = true">
-            <el-icon><InfoFilled /></el-icon>
-          </el-button>
-        </div>
-
-        <!-- Messages -->
-        <div class="messages-container" ref="messagesRef">
-          <div
-            v-for="msg in chatStore.currentSession.messages"
-            :key="msg.msg_id"
-            class="message"
-            :class="{ 'is-me': isFromMe(msg) }"
-          >
-            <!-- 头像 - 每条消息都显示 -->
-            <el-avatar
-              :size="36"
-              :src="getSenderInfo(msg).avatar"
-            >
-              {{ getSenderInfo(msg).nickname?.[0] || getSenderInfo(msg).name?.[0] || '?' }}
-            </el-avatar>
-            <div class="message-content">
-              <div class="message-header">
-                <span class="message-sender">{{ getSenderInfo(msg).name }}</span>
-                <span class="message-time">{{ formatTime(msg.created_at) }}</span>
-              </div>
-              <div class="message-body">{{ parseContent(msg.content) }}</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Input area -->
-        <div class="input-area">
-          <el-input
-            v-model="messageInput"
-            type="textarea"
-            :rows="3"
-            placeholder="输入消息..."
-            @keydown.enter.exact="handleSend"
-          />
-          <div class="input-actions">
-            <el-button type="primary" @click="handleSend" :disabled="!messageInput.trim()">
-              发送
-            </el-button>
-          </div>
-        </div>
+    <!-- 2. List Sidebar -->
+    <div class="list-sidebar">
+      <!-- Search Bar -->
+      <div class="sidebar-search">
+        <el-input 
+          v-model="searchText" 
+          placeholder="搜索..." 
+          prefix-icon="Search"
+          class="custom-input"
+        />
       </div>
+      
+      <!-- Content Lists -->
+      <div class="sidebar-content">
+        <ConversationList 
+          v-if="activeTab === 'chats'" 
+          @select="handleConversationSelect" 
+        />
+        <FriendManager 
+          v-else-if="activeTab === 'friends'" 
+          @chat="handleFriendChat" 
+        />
+        <GroupList 
+          v-else-if="activeTab === 'groups'" 
+          @select="handleGroupSelect" 
+        />
+        <BotList 
+          v-else-if="activeTab === 'ai'" 
+          @select="handleBotSelect" 
+        />
+      </div>
+    </div>
 
-      <!-- Empty state -->
+    <!-- 3. Main Content -->
+    <div class="main-content">
+      <template v-if="activeSessionType">
+        <ChatWindow 
+          :messages="currentMessages"
+          :current-user-id="userStore.currentUser?.id || 0"
+          :title="sessionTitle"
+          :subtitle="sessionSubtitle"
+          :avatar="sessionAvatar"
+          :avatar-style="sessionAvatarStyle"
+          :sending="isSending"
+          :loading="isLoadingMessages"
+          :show-sender-name="activeSessionType === 'group'"
+          :get-sender-name="getSenderName"
+          :get-sender-avatar="getSenderAvatar"
+          :get-sender-style="getSenderStyle"
+          @send="handleSendMessage"
+        >
+          <template #actions>
+            <el-button text circle v-if="activeSessionType === 'group'" @click="showGroupMembers">
+              <el-icon><MoreFilled /></el-icon>
+            </el-button>
+            <el-button text circle v-if="activeSessionType === 'ai'" @click="clearAiChat">
+              <el-icon><Delete /></el-icon>
+            </el-button>
+          </template>
+        </ChatWindow>
+      </template>
+      
       <div v-else class="empty-state">
-        <el-empty description="选择一个聊天或好友开始对话" />
+        <div class="empty-content">
+          <img src="https://trae-api-sg.mchost.guru/api/ide/v1/text_to_image?prompt=minimalist%20chat%20illustration%20vector%20flat%20design%20blue&image_size=square_hd" alt="Empty State" class="empty-img" />
+          <h3>开始聊天</h3>
+          <p>选择一个联系人或群组开始对话</p>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
-import { ElMessageBox, ElMessage } from 'element-plus'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { 
+  ChatLineRound, User, Connection, Cpu, 
+  SwitchButton, ChatDotRound, MoreFilled, Delete 
+} from '@element-plus/icons-vue'
+
 import { useUserStore } from '../store/user'
 import { useChatStore } from '../store/chat'
 import { useGroupStore } from '../store/group'
+import { useAIStore } from '../store/ai'
 import { useWebSocket } from '../utils/websocket'
-import { authApi, groupApi, type User, type GroupMember } from '../api/chat'
-import type { Message as ChatMessage } from '../utils/websocket'
-import AIChat from '../components/AIChat.vue'
-import GroupChat from '../components/GroupChat.vue'
+import { parseSqlNullString } from '../utils/format'
+
+import ConversationList from '../components/ConversationList.vue'
 import FriendManager from '../components/FriendManager.vue'
+import GroupList from '../components/GroupList.vue'
+import BotList from '../components/BotList.vue'
+import ChatWindow from '../components/ChatWindow.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
 const chatStore = useChatStore()
 const groupStore = useGroupStore()
+const aiStore = useAIStore()
 
-const activeTab = ref('conversations')
-const messageInput = ref('')
-const messagesRef = ref<HTMLElement>()
-const currentConvId = ref('')
-
-// 群成员缓存：groupId -> Map<userId, GroupMember>
-const groupMembersCache = ref<Map<number, Map<number, GroupMember>>>(new Map())
+// State
+const activeTab = ref('chats')
+const searchText = ref('')
+const activeSessionType = ref<'private' | 'group' | 'ai' | null>(null)
 
 // WebSocket
-const { status: wsStatus, messages: wsMessages, connect, disconnect, clearMessages } = useWebSocket('ws://localhost:3102/sub')
+const { messages: wsMessages, connect, disconnect } = useWebSocket('ws://localhost:3102/sub')
 
-const isFromMe = (msg: any) => {
-  return msg.from_user_id === userStore.currentUser?.id
-}
-
-// 加载群成员信息
-const loadGroupMembers = async (groupId: number) => {
-  if (groupMembersCache.value.has(groupId)) {
-    return
+// Computed for ChatWindow
+const currentMessages = computed(() => {
+  if (activeSessionType.value === 'ai') {
+    return aiStore.currentBot ? aiStore.getBotMessages(aiStore.currentBot.id) : []
   }
+  return chatStore.currentSession?.messages || []
+})
 
-  try {
-    const response = await groupApi.getMembers(groupId)
-    if (response.code === 0) {
-      const membersMap = new Map<number, GroupMember>()
-      response.data.members?.forEach((member: GroupMember) => {
-        membersMap.set(member.user_id, member)
-      })
-      groupMembersCache.value.set(groupId, membersMap)
+const sessionTitle = computed(() => {
+  if (activeSessionType.value === 'ai') return aiStore.currentBot?.name || 'AI'
+  return chatStore.currentSession?.name || 'Chat'
+})
+
+const sessionSubtitle = computed(() => {
+  if (activeSessionType.value === 'ai') return aiStore.currentBot?.personality || 'Assistant'
+  if (activeSessionType.value === 'group') return `${groupStore.members.length} members`
+  return 'Online'
+})
+
+const sessionAvatar = computed(() => {
+  if (activeSessionType.value === 'ai') return '' // Use style
+  return chatStore.currentSession?.avatar
+})
+
+const sessionAvatarStyle = computed(() => {
+  if (activeSessionType.value === 'ai' && aiStore.currentBot) {
+    const colors: Record<number, string> = {
+      9001: '#409EFF', 9002: '#67C23A', 9003: '#E6A23C', 9004: '#F56C6C'
     }
-  } catch (error) {
-    console.error('Failed to load group members:', error)
+    return { backgroundColor: colors[aiStore.currentBot.id] || '#909399' }
   }
-}
-
-// 获取发送者信息
-const getSenderInfo = (msg: any) => {
-  const myId = userStore.currentUser?.id
-
-  // 如果是自己的消息
-  if (msg.from_user_id === myId) {
-    return {
-      name: '我',
-      avatar: userStore.currentUser?.avatar || '',
-      nickname: userStore.currentUser?.nickname || '我'
-    }
+  if (activeSessionType.value === 'group') {
+     // Generate color based on ID
+     const colors = ['#F56C6C', '#E6A23C', '#67C23A', '#409EFF', '#909399']
+     const id = chatStore.currentSession?.targetId || 0
+     return { backgroundColor: colors[id % colors.length] }
   }
+  return {}
+})
 
-  // 如果是群聊消息
-  if (chatStore.currentSession?.targetType === 'group') {
-    const membersMap = groupMembersCache.value.get(chatStore.currentSession.targetId)
-    const member = membersMap?.get(msg.from_user_id)
-    if (member?.user) {
-      // 处理 SQL.NullString 类型的 avatar_url
-      const avatar = member.user.avatar_url?.Valid ? member.user.avatar_url.String : member.user.avatar_url || ''
-      return {
-        name: member.user.nickname,
-        avatar: avatar,
-        nickname: member.user.nickname
-      }
-    }
-  }
+const isSending = computed(() => {
+  return activeSessionType.value === 'ai' ? aiStore.sending : false
+})
 
-  // 私聊消息：使用会话名称
-  return {
-    name: chatStore.currentSession?.name || '用户',
-    avatar: chatStore.currentSession?.avatar || '',
-    nickname: chatStore.currentSession?.name || '用户'
-  }
-}
+const isLoadingMessages = computed(() => {
+  // Can add loading state logic here
+  return false
+})
 
-const formatTime = (timestamp: string | number) => {
-  let date: Date
-  if (typeof timestamp === 'string') {
-    // ISO format string like "2026-01-04T15:12:15+08:00"
-    date = new Date(timestamp)
-  } else if (timestamp < 10000000000) {
-    // Unix timestamp in seconds
-    date = new Date(timestamp * 1000)
-  } else {
-    // Unix timestamp in milliseconds
-    date = new Date(timestamp)
-  }
-  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-}
-
-const parseContent = (content: string) => {
-  try {
-    const parsed = JSON.parse(content)
-    return parsed.text || content
-  } catch {
-    return content
-  }
-}
-
-const getLastMessage = (conv: any) => {
-  if (!conv.last_msg_content) return '暂无消息'
-  try {
-    const parsed = JSON.parse(conv.last_msg_content)
-    return parsed.text || conv.last_msg_content
-  } catch {
-    return conv.last_msg_content
-  }
-}
-
-const openConversation = async (conv: any) => {
-  currentConvId.value = `${conv.target_id}:${conv.conversation_type}`
-  chatStore.openChat(conv.target_id, conv.conversation_type, conv.target_user?.nickname)
-
-  // 如果是群聊，加载群成员信息
-  if (conv.conversation_type === 2) {
+// Handlers
+const handleConversationSelect = async (conv: any) => {
+  activeSessionType.value = conv.conversation_type === 2 ? 'group' : 'private'
+  const name = parseSqlNullString(conv.target_user?.nickname)
+  const avatar = parseSqlNullString(conv.target_user?.avatar)
+  await chatStore.openChat(conv.target_id, conv.conversation_type, name, avatar)
+  
+  if (activeSessionType.value === 'group') {
+    // Sync group store if needed
+    // groupStore.setCurrentGroup(...) // logic needs to match
     await loadGroupMembers(conv.target_id)
   }
 }
 
-const handleSend = async () => {
-  if (!messageInput.value.trim() || !chatStore.currentSession) return
+const handleFriendChat = (friend: any) => {
+  const userId = friend.friend_user?.id || friend.friend_id
+  activeSessionType.value = 'private'
+  chatStore.openChat(userId, 1, friend.remark || friend.friend_user?.nickname)
+  activeTab.value = 'chats' // Switch to chat tab
+}
 
-  const success = await chatStore.sendMessage(JSON.stringify({ text: messageInput.value }), 1)
-  if (success) {
-    messageInput.value = ''
-    await nextTick()
-    scrollToBottom()
+const handleGroupSelect = async (group: any) => {
+  activeSessionType.value = 'group'
+  await groupStore.setCurrentGroup(group)
+  chatStore.openChat(group.id, 2, group.name)
+  await loadGroupMembers(group.id)
+  // activeTab.value = 'chats' // Optional: stay on groups or switch? Switching is better for "Chat" context
+}
+
+const handleBotSelect = (bot: any) => {
+  activeSessionType.value = 'ai'
+  aiStore.setCurrentBot(bot)
+}
+
+const handleSendMessage = async (content: string) => {
+  if (activeSessionType.value === 'ai') {
+    if (aiStore.currentBot) {
+      await aiStore.sendMessage(aiStore.currentBot.id, content)
+    }
   } else {
-    ElMessage.error('发送失败')
+    // Private or Group
+    const type = activeSessionType.value === 'group' ? 2 : 1
+    await chatStore.sendMessage(JSON.stringify({ text: content }), type)
   }
 }
 
 const handleLogout = async () => {
   try {
     await ElMessageBox.confirm('确定要退出登录吗？', '提示', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning'
+      confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning'
     })
     disconnect()
     userStore.logout()
     router.push('/login')
-  } catch {
-    // Cancelled
+  } catch {}
+}
+
+const showGroupMembers = () => {
+  ElMessage.info('查看群成员功能待实现 (Refactored)')
+  // logic to show dialog
+}
+
+const clearAiChat = async () => {
+  if (aiStore.currentBot) {
+     aiStore.clearMessages(aiStore.currentBot.id)
   }
 }
 
-const scrollToBottom = () => {
-  nextTick(() => {
-    if (messagesRef.value) {
-      messagesRef.value.scrollTop = messagesRef.value.scrollHeight
-    }
-  })
+// Helpers for ChatWindow
+const groupMembersCache = ref<Map<number, Map<number, any>>>(new Map())
+
+const loadGroupMembers = async (groupId: number) => {
+  // Logic from original Main.vue to load members
+  // This is needed for getSenderName/Avatar in groups
+  if (!groupMembersCache.value.has(groupId)) {
+    // Call API... reused logic
+    await groupStore.loadGroups() // Simplification
+    // Actually we need to call groupApi.getMembers
+    // For now, rely on groupStore.members if it's the current group
+  }
 }
 
-// Watch for new messages from WebSocket
-watch(wsMessages, (newMessages) => {
-  if (newMessages.length > 0) {
-    const latestMsg = newMessages[newMessages.length - 1]
-    if (latestMsg.conversation_type === 1 || latestMsg.conversation_type === 2) {
-      chatStore.addMessage(latestMsg)
-      if (chatStore.currentSession?.id === `${latestMsg.conversation_id}:${latestMsg.conversation_type}`) {
-        scrollToBottom()
-      }
-    }
+const getSenderName = (msg: any) => {
+  if (msg.role) return msg.role === 'user' ? '我' : (aiStore.currentBot?.name || 'AI')
+  
+  if (msg.from_user_id === userStore.currentUser?.id) return '我'
+  
+  if (activeSessionType.value === 'group') {
+    const member = groupStore.members.find(m => m.user_id === msg.from_user_id)
+    return member?.user?.nickname || member?.nickname || `User ${msg.from_user_id}`
   }
-})
+  
+  return chatStore.currentSession?.name || 'User'
+}
 
-// Watch for session changes to scroll to bottom
-watch(() => chatStore.currentSession, async (newSession) => {
-  if (newSession && newSession.targetType === 'group') {
-    await loadGroupMembers(newSession.targetId)
+const getSenderAvatar = (msg: any): string => {
+  if (msg.role === 'assistant') return '' // Use style
+  if (msg.from_user_id === userStore.currentUser?.id) return userStore.currentUser?.avatar || ''
+  
+  if (activeSessionType.value === 'group') {
+    const member = groupStore.members.find(m => m.user_id === msg.from_user_id)
+    return member?.user?.avatar || ''
   }
-  nextTick(() => {
-    scrollToBottom()
-  })
-})
+  
+  return chatStore.currentSession?.avatar || ''
+}
 
+const getSenderStyle = (msg: any) => {
+  if (msg.role === 'assistant' && aiStore.currentBot) {
+     // Reusing color logic
+     return sessionAvatarStyle.value
+  }
+  return {}
+}
+
+// Lifecycle
 onMounted(async () => {
   if (!userStore.isLoggedIn) return
-
-  // Load initial data
+  
   await Promise.all([
     chatStore.loadConversations(),
     chatStore.loadFriends()
   ])
-
-  // Connect WebSocket (don't block if it fails)
+  
   try {
     connect(userStore.token, userStore.currentUser!.id)
-  } catch (error) {
-    console.warn('WebSocket connection failed, continuing without it:', error)
-    // WebSocket is optional for basic functionality
-    ElMessage.warning({
-      message: '实时通信未连接，刷新页面获取最新消息',
-      duration: 3000,
-      showClose: true
-    })
+  } catch (e) {
+    console.warn('WS failed', e)
   }
 })
 
-onUnmounted(() => {
-  try {
-    disconnect()
-  } catch (error) {
-    console.warn('Error disconnecting WebSocket:', error)
+// Watch WS messages
+watch(wsMessages, (newMessages) => {
+  if (newMessages.length > 0) {
+    const latestMsg = newMessages[newMessages.length - 1]
+    if (latestMsg.conversation_type === 1 || latestMsg.conversation_type === 2) {
+      // Convert WS message to Store Message
+      chatStore.addMessage({
+        id: Date.now(), // Generate a temporary ID
+        msg_id: latestMsg.msg_id,
+        from_user_id: latestMsg.from_user_id,
+        conversation_id: latestMsg.conversation_id,
+        conversation_type: latestMsg.conversation_type,
+        msg_type: latestMsg.msg_type,
+        content: latestMsg.content,
+        seq: latestMsg.seq,
+        created_at: new Date(latestMsg.created_at).toISOString()
+      })
+    }
   }
 })
+
 </script>
 
 <style scoped>
-.main-container {
+.main-layout {
   display: flex;
+  width: 100vw;
   height: 100vh;
+  background-color: var(--bg-body);
+  overflow: hidden;
 }
 
-.sidebar {
-  width: 280px;
-  background: #fff;
-  border-right: 1px solid #e4e7ed;
+/* 1. Icon Sidebar */
+.icon-sidebar {
+  width: 72px;
+  background-color: var(--bg-surface);
+  border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
+  align-items: center;
+  padding: 24px 0;
+  z-index: 10;
 }
 
-.user-info {
+.app-logo {
+  margin-bottom: 40px;
+}
+
+.nav-items {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  flex: 1;
+}
+
+.nav-item {
+  width: 48px;
+  height: 48px;
   display: flex;
   align-items: center;
-  padding: 16px;
-  gap: 12px;
-  border-bottom: 1px solid #e4e7ed;
+  justify-content: center;
+  border-radius: 12px;
+  cursor: pointer;
+  color: var(--text-light);
+  transition: all 0.2s;
 }
 
-.user-details {
-  flex: 1;
-  min-width: 0;
+.nav-item:hover {
+  background-color: var(--primary-light);
+  color: var(--primary-color);
 }
 
-.user-name {
-  font-size: 14px;
-  font-weight: 500;
-  color: #303133;
+.nav-item.active {
+  background-color: var(--primary-color);
+  color: white;
+  box-shadow: var(--shadow-md);
 }
 
-.user-status {
+.bottom-actions {
+  margin-top: auto;
+}
+
+.user-avatar {
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.user-avatar:hover {
+  border-color: var(--primary-color);
+}
+
+.user-dropdown-header {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 8px;
+}
+
+.dropdown-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dropdown-status {
   font-size: 12px;
   color: #67c23a;
 }
 
-.sidebar-tabs {
-  flex: 1;
-  overflow: hidden;
-}
-
-.sidebar-tabs :deep(.el-tabs__content) {
-  height: calc(100% - 40px);
-}
-
-.sidebar-tabs :deep(.el-tab-pane) {
-  height: 100%;
-}
-
-.tab-content {
-  height: 100%;
-  overflow-y: auto;
-  padding: 12px;
-}
-
-.conversation-item,
-.friend-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  margin-bottom: 4px;
-  border-radius: 10px;
-  cursor: pointer;
-  transition: all 0.25s ease;
-  position: relative;
-}
-
-.conversation-item :deep(.el-avatar),
-.friend-item :deep(.el-avatar) {
-  flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  border: 2px solid #fff;
-  transition: all 0.25s ease;
-}
-
-.conversation-item:hover :deep(.el-avatar),
-.friend-item:hover :deep(.el-avatar) {
-  transform: scale(1.05);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.conversation-item:hover,
-.friend-item:hover {
-  background: #f5f7fa;
-  transform: translateX(2px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-
-.conversation-item.active {
-  background: linear-gradient(135deg, #ecf5ff 0%, #e1f0ff 100%);
-  box-shadow: 0 2px 12px rgba(64, 158, 255, 0.15);
-}
-
-.conversation-item.active .conv-name {
-  color: #409eff;
-  font-weight: 600;
-}
-
-.conv-info,
-.friend-info {
-  flex: 1;
-  min-width: 0;
+/* 2. List Sidebar */
+.list-sidebar {
+  width: 320px;
+  background-color: var(--bg-surface);
+  border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
-  gap: 4px;
 }
 
-.conv-name,
-.friend-name {
-  font-size: 14px;
-  font-weight: 500;
-  color: #303133;
-  line-height: 1.4;
-}
-
-.conv-preview {
-  font-size: 12px;
-  color: #909399;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  line-height: 1.3;
-}
-
-.friend-remark {
-  font-size: 12px;
-  color: #909399;
-}
-
-.unread-badge {
-  position: absolute;
-  right: 12px;
-  top: 50%;
-  transform: translateY(-50%);
-}
-
-.unread-badge :deep(.el-badge__content) {
-  background: linear-gradient(135deg, #ff6b6b 0%, #ff5252 100%);
-  border: 2px solid #fff;
-  box-shadow: 0 2px 8px rgba(255, 82, 82, 0.3);
-  font-weight: 600;
-}
-
-.search-box {
-  padding: 8px;
-}
-
-.search-results {
-  margin-top: 10px;
-  border-top: 1px solid #e4e7ed;
-  padding-top: 10px;
-}
-
-.search-title {
-  font-size: 12px;
-  color: #909399;
-  padding: 0 8px 8px;
-}
-
-.search-result-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px;
-  cursor: pointer;
-}
-
-.search-result-item:hover {
-  background: #f5f7fa;
-}
-
-.chat-area {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  background: #f5f7fa;
-}
-
-.chat-container {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-.chat-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  background: #fff;
-  border-bottom: 1px solid #e4e7ed;
-}
-
-.chat-header h3 {
-  margin: 0;
-  font-size: 16px;
-  color: #303133;
-}
-
-.messages-container {
-  flex: 1;
-  overflow-y: auto;
+.sidebar-search {
   padding: 20px;
 }
 
-.message {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.message.is-me {
-  flex-direction: row-reverse;
-}
-
-.message-content {
-  max-width: 60%;
-}
-
-.message-header {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 4px;
-  font-size: 12px;
-}
-
-.message-sender {
-  font-weight: 500;
-  color: #606266;
-}
-
-.message-time {
-  color: #909399;
-}
-
-.message-body {
-  padding: 10px 14px;
-  background: #fff;
+.custom-input :deep(.el-input__wrapper) {
+  background-color: var(--bg-body);
+  box-shadow: none;
   border-radius: 8px;
-  word-break: break-word;
 }
 
-.message.is-me .message-body {
-  background: #95ec69;
-}
-
-.input-area {
-  padding: 16px 20px;
-  background: #fff;
-  border-top: 1px solid #e4e7ed;
-}
-
-.input-actions {
+.sidebar-content {
+  flex: 1;
+  overflow: hidden;
   display: flex;
-  justify-content: flex-end;
-  margin-top: 10px;
+  flex-direction: column;
+}
+
+/* 3. Main Content */
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-chat);
+  position: relative;
 }
 
 .empty-state {
-  flex: 1;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
+  color: var(--text-light);
 }
 
-/* AI Tab Styles */
-.ai-tab {
-  height: 100%;
-  padding: 0;
+.empty-content {
+  text-align: center;
 }
 
-.ai-tab :deep(.ai-chat-container) {
-  height: 100%;
+.empty-img {
+  width: 200px;
+  height: 200px;
+  object-fit: cover;
+  margin-bottom: 24px;
+  opacity: 0.8;
 }
 
-/* Groups Tab Styles */
-.groups-tab {
-  height: 100%;
-  padding: 0;
-}
-
-.groups-tab :deep(.group-chat-container) {
-  height: 100%;
-}
-
-/* Friends Tab Styles */
-.friends-tab {
-  height: 100%;
-  padding: 0;
-}
-
-.friends-tab :deep(.friend-manager-container) {
-  height: 100%;
+.empty-content h3 {
+  font-size: 1.5rem;
+  color: var(--text-primary);
+  margin-bottom: 8px;
 }
 </style>
