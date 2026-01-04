@@ -86,6 +86,10 @@ func main() {
 func register(dis *naming.Discovery, srv *comet.Server) context.CancelFunc {
 	env := conf.Conf.Env
 	addr := ip.InternalIP()
+	// Use first address from addrs flag if available for local development
+	if len(env.Addrs) > 0 && env.Addrs[0] != "" {
+		addr = env.Addrs[0]
+	}
 	_, port, _ := net.SplitHostPort(conf.Conf.RPCServer.Addr)
 	ins := &naming.Instance{
 		Region:   env.Region,
