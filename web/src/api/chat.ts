@@ -86,6 +86,7 @@ export interface FriendRequest {
   to_user_id: number
   message?: string
   status: number
+  created_at: string
   from_user?: User
 }
 

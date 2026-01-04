@@ -35,7 +35,7 @@
                   </div>
                 </div>
               </div>
-              <el-dropdown trigger="click" @command="(cmd) => handleFriendCommand(cmd, friend)">
+              <el-dropdown trigger="click" @command="(cmd: string | number | object) => handleFriendCommand(cmd as string, friend)">
                 <el-button text circle>
                   <el-icon><MoreFilled /></el-icon>
                 </el-button>
@@ -192,6 +192,7 @@ import { Search } from '@element-plus/icons-vue'
 import { friendApi, authApi } from '../api/chat'
 import { useChatStore } from '../store/chat'
 import type { Friend, FriendRequest, User } from '../api/chat'
+import { parseSqlNullString } from '../utils/format'
 
 const chatStore = useChatStore()
 
@@ -215,11 +216,15 @@ const filteredFriends = computed(() => {
 
   const keyword = searchKeyword.value.toLowerCase()
   return chatStore.friends.filter(friend => {
-    const nickname = friend.friend_user?.nickname?.toLowerCase() || ''
+    const nickname = parseSqlNullString(friend.friend_user?.nickname).toLowerCase()
     const remark = friend.remark?.toLowerCase() || ''
     return nickname.includes(keyword) || remark.includes(keyword)
   })
 })
+
+const getNickname = (user: any) => {
+  return parseSqlNullString(user?.nickname)
+}
 
 const formatTime = (timestamp: string) => {
   const date = new Date(timestamp)
@@ -240,7 +245,7 @@ const handleSearch = () => {
 
 const startChat = (friend: Friend) => {
   const userId = friend.friend_user?.id || friend.friend_id
-  chatStore.openChat(userId, 1, friend.remark || friend.friend_user?.nickname || friend.remark)
+  chatStore.openChat(userId, 1, friend.remark || getNickname(friend.friend_user) || friend.remark)
 }
 
 const handleFriendCommand = async (command: string, friend: Friend) => {
@@ -288,7 +293,7 @@ const handleDeleteFriend = async (friend: Friend) => {
     )
 
     const response = await friendApi.deleteFriend(friend.id)
-    if (response.code === 0) {
+    if ((response as any).code === 0) {
       ElMessage.success('已删除好友')
       await chatStore.loadFriends()
     }
@@ -305,8 +310,8 @@ const searchUsers = async () => {
   hasSearched.value = true
   try {
     const response = await authApi.searchUsers(searchForm.value.keyword)
-    if (response.code === 0) {
-      searchResults.value = response.data.users || []
+    if ((response as any).code === 0) {
+      searchResults.value = (response as any).data.users || []
     }
   } catch (error: any) {
     ElMessage.error(error.message || '搜索失败')
@@ -328,7 +333,7 @@ const handleSendRequest = async () => {
       message: requestForm.value.message
     })
 
-    if (response.code === 0) {
+    if ((response as any).code === 0) {
       ElMessage.success('好友请求已发送')
       showRequestDialog.value = false
       searchResults.value = []
@@ -343,7 +348,7 @@ const handleRequest = async (requestId: number, action: 'accept' | 'reject') => 
     const api = action === 'accept' ? friendApi.acceptRequest : friendApi.rejectRequest
     const response = await api(requestId)
 
-    if (response.code === 0) {
+    if ((response as any).code === 0) {
       ElMessage.success(action === 'accept' ? '已接受好友请求' : '已拒绝好友请求')
       await loadFriendRequests()
       if (action === 'accept') {
@@ -358,8 +363,8 @@ const handleRequest = async (requestId: number, action: 'accept' | 'reject') => 
 const loadFriendRequests = async () => {
   try {
     const response = await friendApi.getRequests()
-    if (response.code === 0) {
-      pendingRequests.value = (response.data.requests || []).filter((r: FriendRequest) => r.status === 0)
+    if ((response as any).code === 0) {
+      pendingRequests.value = ((response as any).data.requests || []).filter((r: FriendRequest) => r.status === 0)
     }
   } catch (error: any) {
     console.error('Failed to load friend requests:', error)
@@ -388,6 +393,11 @@ onMounted(async () => {
 .friend-tabs :deep(.el-tabs__content) {
   flex: 1;
   overflow: hidden;
+}
+
+.friend-tabs :deep(.el-tabs__nav-scroll) {
+  display: flex;
+  justify-content: center;
 }
 
 .friend-tabs :deep(.el-tab-pane) {
