@@ -1,0 +1,36 @@
+# ChatAPI Service Configuration
+
+[httpServer]
+addr = "0.0.0.0:3112"
+readTimeout = 10 # seconds
+writeTimeout = 10 # seconds
+
+[mysql]
+dsn = "root:Zph20040522@@tcp(127.0.0.1:3306)/goim_chat?charset=utf8mb4&parseTime=true&loc=Local"
+maxIdle = 10
+maxOpen = 100
+maxLifetime = 3600 # seconds
+
+[redis]
+network = "tcp"
+addr = "127.0.0.1:6379"
+auth = ""
+database = 0
+
+[logic]
+appid = "goim.logic"
+timeout = 3000 # milliseconds
+# Logic HTTP API endpoint for pushing messages
+endpoint = "http://127.0.0.1:3111"
+
+[jwt]
+secret = "goim-chat-secret-key-please-change-in-production"
+expireTime = 24 # hours
+
+[ai]
+provider = "openai"
+apiKey = "db30098ee45c461e9d2c9b9eb7b30d1c.BhE3UZpHoGDLFSnL"
+baseUrl = "https://open.bigmodel.cn/api/paas/v4"
+model = "glm-4-flash"
+temperature = 0.7
+maxTokens = 1000
