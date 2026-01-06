@@ -13,9 +13,9 @@ export const useGroupStore = defineStore('group', () => {
     loading.value = true
     try {
       const response = await groupApi.getList()
-      if (response.code === 0) {
+      if ((response as any).code === 0) {
         // Filter out any undefined/null groups and ensure array
-        const groupsData = response.data.groups || []
+        const groupsData = (response as any).data?.groups || []
         groups.value = groupsData.filter((g: Group | null | undefined): g is Group => g != null && g.id != null)
       } else {
         groups.value = []
@@ -34,8 +34,16 @@ export const useGroupStore = defineStore('group', () => {
     loading.value = true
     try {
       const response = await groupApi.create(data)
-      if (response.code === 0) {
-        const newGroup = response.data.group
+      if ((response as any).code === 0) {
+        const newGroup: Group = {
+          id: (response as any).data.group_id,
+          group_no: (response as any).data.group_no,
+          name: (response as any).data.name,
+          owner_id: (response as any).data.owner_id,
+          max_members: (response as any).data.max_members,
+          join_type: 1,
+          mute_all: 0
+        }
         groups.value.push(newGroup)
         return newGroup
       }
@@ -58,9 +66,9 @@ export const useGroupStore = defineStore('group', () => {
   const loadMembers = async (groupId: number) => {
     try {
       const response = await groupApi.getMembers(groupId)
-      if (response.code === 0) {
+      if ((response as any).code === 0) {
         // Filter out any undefined/null members and ensure array
-        const membersData = response.data.members || []
+        const membersData = (response as any).data?.members || []
         members.value = membersData.filter((m: GroupMember | null | undefined): m is GroupMember => m != null && m.id != null)
       } else {
         members.value = []
@@ -76,7 +84,7 @@ export const useGroupStore = defineStore('group', () => {
   const joinGroup = async (groupId: number, message?: string): Promise<boolean> => {
     try {
       const response = await groupApi.join(groupId, message)
-      if (response.code === 0) {
+      if ((response as any).code === 0) {
         await loadGroups()
         return true
       }
@@ -91,7 +99,7 @@ export const useGroupStore = defineStore('group', () => {
   const leaveGroup = async (groupId: number): Promise<boolean> => {
     try {
       const response = await groupApi.leave(groupId)
-      if (response.code === 0) {
+      if ((response as any).code === 0) {
         groups.value = groups.value.filter(g => g.id !== groupId)
         if (currentGroup.value?.id === groupId) {
           currentGroup.value = null
@@ -115,7 +123,7 @@ export const useGroupStore = defineStore('group', () => {
         msg_type: 1, // text
         content: JSON.stringify({ text: content })
       })
-      return response.code === 0
+      return (response as any).code === 0
     } catch (error: any) {
       console.error('Failed to send message:', error)
       throw error

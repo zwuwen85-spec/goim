@@ -57,10 +57,12 @@ func (d *FriendDAO) UpdateFriendRequestStatus(ctx context.Context, id int64, sta
 // GetFriendRequestsByUser gets all friend requests for a user (both sent and received)
 func (d *FriendDAO) GetFriendRequestsByUser(ctx context.Context, userID int64) ([]*model.FriendRequest, error) {
 	query := `
-		SELECT id, from_user_id, to_user_id, message, status, created_at, updated_at
-		FROM friend_requests
-		WHERE to_user_id = ? AND status = 1
-		ORDER BY created_at DESC
+		SELECT r.id, r.from_user_id, r.to_user_id, r.message, r.status, r.created_at, r.updated_at,
+		       u.id, u.username, u.password_hash, u.nickname, u.avatar_url, u.status, u.signature, u.created_at, u.updated_at
+		FROM friend_requests r
+		INNER JOIN users u ON r.from_user_id = u.id
+		WHERE r.to_user_id = ? AND r.status = 1
+		ORDER BY r.created_at DESC
 	`
 	rows, err := d.mysql.Query(ctx, query, userID)
 	if err != nil {
@@ -70,7 +72,7 @@ func (d *FriendDAO) GetFriendRequestsByUser(ctx context.Context, userID int64) (
 
 	var requests []*model.FriendRequest
 	for rows.Next() {
-		req, err := d.scanFriendRequest(rows)
+		req, err := d.scanFriendRequestWithUser(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -190,5 +192,26 @@ func (d *FriendDAO) scanFriendRequest(scanner interface{ Scan(...interface{}) er
 	if err != nil {
 		return nil, err
 	}
+	return &req, nil
+}
+
+// scanFriendRequestWithUser scans a friend request with user info from a row
+func (d *FriendDAO) scanFriendRequestWithUser(rows *sql.Rows) (*model.FriendRequest, error) {
+	var req model.FriendRequest
+	var user model.User
+
+	err := rows.Scan(
+		&req.ID, &req.FromUserID, &req.ToUserID, &req.Message,
+		&req.Status, &req.CreatedAt, &req.UpdatedAt,
+		&user.ID, &user.Username, &user.PasswordHash, &user.Nickname,
+		&user.AvatarURL, &user.Status, &user.Signature,
+		&user.CreatedAt, &user.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	user.PasswordHash = "" // Don't return password hash
+	req.FromUser = &user
 	return &req, nil
 }

@@ -292,7 +292,7 @@ const handleDeleteFriend = async (friend: Friend) => {
       }
     )
 
-    const response = await friendApi.deleteFriend(friend.id)
+    const response = await friendApi.deleteFriend(friend.friend_id)
     if ((response as any).code === 0) {
       ElMessage.success('已删除好友')
       await chatStore.loadFriends()
@@ -364,7 +364,7 @@ const loadFriendRequests = async () => {
   try {
     const response = await friendApi.getRequests()
     if ((response as any).code === 0) {
-      pendingRequests.value = ((response as any).data.requests || []).filter((r: FriendRequest) => r.status === 0)
+      pendingRequests.value = ((response as any).data.requests || []).filter((r: FriendRequest) => r.status === 1)
     }
   } catch (error: any) {
     console.error('Failed to load friend requests:', error)

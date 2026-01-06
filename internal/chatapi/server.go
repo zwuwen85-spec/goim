@@ -179,6 +179,14 @@ func (s *Server) setupRoutes() {
 				group.GET("/info/:id", handler.Wrap(s.handleGetGroupInfo))
 				group.GET("/members/:id", handler.Wrap(s.handleGetGroupMembers))
 				group.PUT("/info/:id", handler.Wrap(s.handleUpdateGroup))
+				// New: invite, kick, set admin, etc.
+				group.POST("/invite/:id", handler.Wrap(s.handleInviteMember))
+				group.DELETE("/kick/:id/:userId", handler.Wrap(s.handleKickMember))
+				group.PUT("/role/:id/:userId", handler.Wrap(s.handleSetMemberRole))
+				group.PUT("/nickname/:id/:userId", handler.Wrap(s.handleSetMemberNickname))
+				group.PUT("/mute/:id/:userId", handler.Wrap(s.handleMuteMember))
+				group.POST("/transfer/:id/:userId", handler.Wrap(s.handleTransferOwnership))
+				group.DELETE("/:id", handler.Wrap(s.handleDeleteGroup))
 			}
 
 			// Message routes
@@ -850,6 +858,346 @@ func (s *Server) handleGetGroups(c *gin.Context) (interface{}, error) {
 	}
 
 	return gin.H{"groups": result}, nil
+}
+
+// handleInviteMember invites a user to a group (by owner/admin)
+func (s *Server) handleInviteMember(c *gin.Context) (interface{}, error) {
+	groupID := c.Param("id")
+	var gID int64
+	if _, err := fmt.Sscanf(groupID, "%d", &gID); err != nil {
+		return nil, fmt.Errorf("invalid group id")
+	}
+
+	var req struct {
+		UserID int64  `json:"user_id" binding:"required"`
+		Role   int8   `json:"role"`   // Optional: 1=member, 2=admin
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return nil, fmt.Errorf("invalid request: %w", err)
+	}
+
+	userID := middleware.GetUserIDFromGin(c)
+	ctx := c.Request.Context()
+
+	// Check if inviter is owner or admin
+	inviterRole, err := s.groupDAO.GetMemberRole(ctx, gID, userID)
+	if err != nil || (inviterRole != 3 && inviterRole != 2) {
+		return nil, fmt.Errorf("only owner or admin can invite members")
+	}
+
+	// Check if target user exists
+	targetUser, err := s.userDAO.FindByID(ctx, req.UserID)
+	if err != nil || targetUser == nil {
+		return nil, fmt.Errorf("user not found")
+	}
+
+	// Check if already a member
+	isMember, _ := s.groupDAO.IsMember(ctx, gID, req.UserID)
+	if isMember {
+		return nil, fmt.Errorf("user is already a member")
+	}
+
+	// Add member (default role is member)
+	role := req.Role
+	if role == 0 {
+		role = 1 // Default to member
+	}
+	if inviterRole == 2 && role == 3 {
+		return nil, fmt.Errorf("admin cannot make someone owner")
+	}
+
+	if err := s.groupDAO.AddMember(ctx, gID, req.UserID, role); err != nil {
+		return nil, fmt.Errorf("failed to add member: %w", err)
+	}
+
+	// Create system message
+	welcomeMsg := &model.Message{
+		FromUserID:       userID,
+		ConversationID:   gID,
+		ConversationType: model.ConversationTypeGroup,
+		MsgType:          model.MsgTypeSystem,
+		Content:          fmt.Sprintf(`{"text":"邀请 %s 加入了群聊"}`, targetUser.Nickname),
+	}
+	s.messageDAO.CreateMessage(ctx, welcomeMsg)
+
+	return gin.H{"message": "member invited successfully"}, nil
+}
+
+// handleKickMember removes a member from the group (by owner/admin)
+func (s *Server) handleKickMember(c *gin.Context) (interface{}, error) {
+	groupID := c.Param("id")
+	userIDStr := c.Param("userId")
+	var gID, targetUserID int64
+	if _, err := fmt.Sscanf(groupID, "%d", &gID); err != nil {
+		return nil, fmt.Errorf("invalid group id")
+	}
+	if _, err := fmt.Sscanf(userIDStr, "%d", &targetUserID); err != nil {
+		return nil, fmt.Errorf("invalid user id")
+	}
+
+	userID := middleware.GetUserIDFromGin(c)
+	ctx := c.Request.Context()
+
+	// Check if kicker is owner or admin
+	kickerRole, err := s.groupDAO.GetMemberRole(ctx, gID, userID)
+	if err != nil || (kickerRole != 3 && kickerRole != 2) {
+		return nil, fmt.Errorf("only owner or admin can remove members")
+	}
+
+	// Check target user's role
+	targetRole, err := s.groupDAO.GetMemberRole(ctx, gID, targetUserID)
+	if err != nil {
+		return nil, fmt.Errorf("target user not found")
+	}
+
+	// Admin cannot kick owner or other admins (only owner can)
+	if kickerRole == 2 && (targetRole == 3 || targetRole == 2) {
+		return nil, fmt.Errorf("admin cannot kick owner or other admins")
+	}
+
+	// Get target user info
+	targetUser, _ := s.userDAO.FindByID(ctx, targetUserID)
+
+	// Remove member
+	if err := s.groupDAO.RemoveMember(ctx, gID, targetUserID); err != nil {
+		return nil, fmt.Errorf("failed to remove member: %w", err)
+	}
+
+	// Create system message
+	kickMsg := &model.Message{
+		FromUserID:       userID,
+		ConversationID:   gID,
+		ConversationType: model.ConversationTypeGroup,
+		MsgType:          model.MsgTypeSystem,
+		Content:          fmt.Sprintf(`{"text":"%s 被移出了群聊"}`, getNickname(targetUser)),
+	}
+	s.messageDAO.CreateMessage(ctx, kickMsg)
+
+	return gin.H{"message": "member removed successfully"}, nil
+}
+
+// handleSetMemberRole sets a member's role (by owner)
+func (s *Server) handleSetMemberRole(c *gin.Context) (interface{}, error) {
+	groupID := c.Param("id")
+	userIDStr := c.Param("userId")
+	var gID, targetUserID int64
+	if _, err := fmt.Sscanf(groupID, "%d", &gID); err != nil {
+		return nil, fmt.Errorf("invalid group id")
+	}
+	if _, err := fmt.Sscanf(userIDStr, "%d", &targetUserID); err != nil {
+		return nil, fmt.Errorf("invalid user id")
+	}
+
+	var req struct {
+		Role int8 `json:"role" binding:"required,min=1,max=3"` // 1=member, 2=admin, 3=owner
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return nil, fmt.Errorf("invalid request: %w", err)
+	}
+
+	userID := middleware.GetUserIDFromGin(c)
+	ctx := c.Request.Context()
+
+	// Check if operator is owner
+	group, err := s.groupDAO.FindByID(ctx, gID)
+	if err != nil || group == nil {
+		return nil, fmt.Errorf("group not found")
+	}
+	if group.OwnerID != userID {
+		return nil, fmt.Errorf("only owner can change member roles")
+	}
+
+	// Cannot change own role
+	if targetUserID == userID {
+		return nil, fmt.Errorf("cannot change your own role")
+	}
+
+	// Update role
+	if err := s.groupDAO.UpdateMemberRole(ctx, gID, targetUserID, req.Role); err != nil {
+		return nil, fmt.Errorf("failed to update role: %w", err)
+	}
+
+	return gin.H{"message": "role updated successfully"}, nil
+}
+
+// handleSetMemberNickname sets a member's nickname in the group
+func (s *Server) handleSetMemberNickname(c *gin.Context) (interface{}, error) {
+	groupID := c.Param("id")
+	userIDStr := c.Param("userId")
+	var gID, targetUserID int64
+	if _, err := fmt.Sscanf(groupID, "%d", &gID); err != nil {
+		return nil, fmt.Errorf("invalid group id")
+	}
+	if _, err := fmt.Sscanf(userIDStr, "%d", &targetUserID); err != nil {
+		return nil, fmt.Errorf("invalid user id")
+	}
+
+	var req struct {
+		Nickname string `json:"nickname" binding:"required,max=100"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return nil, fmt.Errorf("invalid request: %w", err)
+	}
+
+	userID := middleware.GetUserIDFromGin(c)
+	ctx := c.Request.Context()
+
+	// Can set own nickname or owner/admin can set others'
+	if targetUserID != userID {
+		operatorRole, err := s.groupDAO.GetMemberRole(ctx, gID, userID)
+		if err != nil || (operatorRole != 3 && operatorRole != 2) {
+			return nil, fmt.Errorf("can only set your own nickname")
+		}
+	}
+
+	// Update nickname
+	if err := s.groupDAO.UpdateMemberNickname(ctx, gID, targetUserID, req.Nickname); err != nil {
+		return nil, fmt.Errorf("failed to update nickname: %w", err)
+	}
+
+	return gin.H{"message": "nickname updated successfully"}, nil
+}
+
+// handleMuteMember mutes/unmutes a member (by owner/admin)
+func (s *Server) handleMuteMember(c *gin.Context) (interface{}, error) {
+	groupID := c.Param("id")
+	userIDStr := c.Param("userId")
+	var gID, targetUserID int64
+	if _, err := fmt.Sscanf(groupID, "%d", &gID); err != nil {
+		return nil, fmt.Errorf("invalid group id")
+	}
+	if _, err := fmt.Sscanf(userIDStr, "%d", &targetUserID); err != nil {
+		return nil, fmt.Errorf("invalid user id")
+	}
+
+	var req struct {
+		Duration int `json:"duration"` // Duration in minutes, 0 to unmute
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return nil, fmt.Errorf("invalid request: %w", err)
+	}
+
+	userID := middleware.GetUserIDFromGin(c)
+	ctx := c.Request.Context()
+
+	// Check if operator is owner or admin
+	operatorRole, err := s.groupDAO.GetMemberRole(ctx, gID, userID)
+	if err != nil || (operatorRole != 3 && operatorRole != 2) {
+		return nil, fmt.Errorf("only owner or admin can mute members")
+	}
+
+	// Check target role
+	targetRole, err := s.groupDAO.GetMemberRole(ctx, gID, targetUserID)
+	if err != nil {
+		return nil, fmt.Errorf("target user not found")
+	}
+
+	// Admin cannot mute owner
+	if operatorRole == 2 && targetRole == 3 {
+		return nil, fmt.Errorf("admin cannot mute owner")
+	}
+
+	var muteUntil *time.Time
+	if req.Duration > 0 {
+		until := time.Now().Add(time.Duration(req.Duration) * time.Minute)
+		muteUntil = &until
+	}
+
+	if err := s.groupDAO.SetMemberMute(ctx, gID, targetUserID, muteUntil); err != nil {
+		return nil, fmt.Errorf("failed to set mute: %w", err)
+	}
+
+	return gin.H{"message": "mute status updated successfully"}, nil
+}
+
+// handleTransferOwnership transfers group ownership to another member
+func (s *Server) handleTransferOwnership(c *gin.Context) (interface{}, error) {
+	groupID := c.Param("id")
+	userIDStr := c.Param("userId")
+	var gID, newOwnerID int64
+	if _, err := fmt.Sscanf(groupID, "%d", &gID); err != nil {
+		return nil, fmt.Errorf("invalid group id")
+	}
+	if _, err := fmt.Sscanf(userIDStr, "%d", &newOwnerID); err != nil {
+		return nil, fmt.Errorf("invalid user id")
+	}
+
+	userID := middleware.GetUserIDFromGin(c)
+	ctx := c.Request.Context()
+
+	// Check if current user is owner
+	group, err := s.groupDAO.FindByID(ctx, gID)
+	if err != nil || group == nil {
+		return nil, fmt.Errorf("group not found")
+	}
+	if group.OwnerID != userID {
+		return nil, fmt.Errorf("only owner can transfer ownership")
+	}
+
+	// Check if new owner is a member
+	isMember, err := s.groupDAO.IsMember(ctx, gID, newOwnerID)
+	if err != nil || !isMember {
+		return nil, fmt.Errorf("target user is not a member")
+	}
+
+	// Get new owner info
+	newOwner, _ := s.userDAO.FindByID(ctx, newOwnerID)
+
+	// Transfer ownership
+	if err := s.groupDAO.TransferOwnership(ctx, gID, newOwnerID); err != nil {
+		return nil, fmt.Errorf("failed to transfer ownership: %w", err)
+	}
+
+	// Create system message
+	transferMsg := &model.Message{
+		FromUserID:       userID,
+		ConversationID:   gID,
+		ConversationType: model.ConversationTypeGroup,
+		MsgType:          model.MsgTypeSystem,
+		Content:          fmt.Sprintf(`{"text":"群主转让给 %s"}`, getNickname(newOwner)),
+	}
+	s.messageDAO.CreateMessage(ctx, transferMsg)
+
+	return gin.H{"message": "ownership transferred successfully"}, nil
+}
+
+// handleDeleteGroup deletes a group (by owner)
+func (s *Server) handleDeleteGroup(c *gin.Context) (interface{}, error) {
+	groupID := c.Param("id")
+	var gID int64
+	if _, err := fmt.Sscanf(groupID, "%d", &gID); err != nil {
+		return nil, fmt.Errorf("invalid group id")
+	}
+
+	userID := middleware.GetUserIDFromGin(c)
+	ctx := c.Request.Context()
+
+	// Check if user is owner
+	group, err := s.groupDAO.FindByID(ctx, gID)
+	if err != nil || group == nil {
+		return nil, fmt.Errorf("group not found")
+	}
+	if group.OwnerID != userID {
+		return nil, fmt.Errorf("only owner can delete group")
+	}
+
+	// Delete group
+	if err := s.groupDAO.DeleteGroup(ctx, gID); err != nil {
+		return nil, fmt.Errorf("failed to delete group: %w", err)
+	}
+
+	return gin.H{"message": "group deleted successfully"}, nil
+}
+
+// Helper function to get nickname
+func getNickname(user *model.User) string {
+	if user == nil {
+		return "用户"
+	}
+	if user.Nickname != "" {
+		return user.Nickname
+	}
+	return user.Username
 }
 
 // Message handlers

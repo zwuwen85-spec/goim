@@ -97,30 +97,59 @@
     <!-- 3. Main Content -->
     <div class="main-content">
       <template v-if="activeSessionType">
-        <ChatWindow 
-          :messages="currentMessages"
-          :current-user-id="userStore.currentUser?.id || 0"
-          :title="sessionTitle"
-          :subtitle="sessionSubtitle"
-          :avatar="sessionAvatar"
-          :avatar-style="sessionAvatarStyle"
-          :sending="isSending"
-          :loading="isLoadingMessages"
-          :show-sender-name="activeSessionType === 'group'"
-          :get-sender-name="getSenderName"
-          :get-sender-avatar="getSenderAvatar"
-          :get-sender-style="getSenderStyle"
-          @send="handleSendMessage"
-        >
-          <template #actions>
-            <el-button text circle v-if="activeSessionType === 'group'" @click="showGroupMembers">
-              <el-icon><MoreFilled /></el-icon>
-            </el-button>
-            <el-button text circle v-if="activeSessionType === 'ai'" @click="clearAiChat">
-              <el-icon><Delete /></el-icon>
-            </el-button>
-          </template>
-        </ChatWindow>
+        <div class="chat-container">
+          <ChatWindow
+            ref="chatWindowRef"
+            :messages="currentMessages"
+            :current-user-id="userStore.currentUser?.id || 0"
+            :title="sessionTitle"
+            :subtitle="sessionSubtitle"
+            :avatar="sessionAvatar"
+            :avatar-style="sessionAvatarStyle"
+            :sending="isSending"
+            :loading="isLoadingMessages"
+            :show-sender-name="activeSessionType === 'group'"
+            :get-sender-name="getSenderName"
+            :get-sender-avatar="getSenderAvatar"
+            :get-sender-style="getSenderStyle"
+            @send="handleSendMessage"
+          >
+            <template #actions>
+              <div class="header-actions-wrapper">
+                <el-button 
+                  v-show="activeSessionType === 'group'" 
+                  key="group-btn"
+                  text 
+                  circle 
+                  @click.stop="toggleGroupSidebar"
+                >
+                  <el-icon><MoreFilled /></el-icon>
+                </el-button>
+                <el-button 
+                  v-show="activeSessionType === 'ai'" 
+                  key="ai-btn"
+                  text 
+                  circle 
+                  @click="clearAiChat"
+                >
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </div>
+            </template>
+          </ChatWindow>
+
+          <!-- Group Sidebar -->
+          <div class="sidebar-wrapper" v-if="activeSessionType === 'group' && groupStore.currentGroup">
+            <GroupSidebar
+              v-show="showGroupSidebar"
+              :key="groupStore.currentGroup.id"
+              :group="groupStore.currentGroup"
+              @close-sidebar="showGroupSidebar = false"
+              @close="handleGroupClose"
+              @scroll-to-message="handleScrollToMessage"
+            />
+          </div>
+        </div>
       </template>
       
       <div v-else class="empty-state">
@@ -135,7 +164,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
@@ -155,6 +184,7 @@ import FriendManager from '../components/FriendManager.vue'
 import GroupList from '../components/GroupList.vue'
 import BotList from '../components/BotList.vue'
 import ChatWindow from '../components/ChatWindow.vue'
+import GroupSidebar from '../components/GroupSidebar.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -166,6 +196,8 @@ const aiStore = useAIStore()
 const activeTab = ref('chats')
 const searchText = ref('')
 const activeSessionType = ref<'private' | 'group' | 'ai' | null>(null)
+const showGroupSidebar = ref(false)
+const chatWindowRef = ref<InstanceType<typeof ChatWindow>>()
 
 // WebSocket
 const { messages: wsMessages, connect, disconnect } = useWebSocket('ws://localhost:3102/sub')
@@ -221,36 +253,73 @@ const isLoadingMessages = computed(() => {
 
 // Handlers
 const handleConversationSelect = async (conv: any) => {
+  console.log('handleConversationSelect:', conv.conversation_type, 'current activeSessionType:', activeSessionType.value)
+
+  // Close sidebar first
+  showGroupSidebar.value = false
+  console.log('set showGroupSidebar to false')
+
+  await nextTick()
+
   activeSessionType.value = conv.conversation_type === 2 ? 'group' : 'private'
   const name = parseSqlNullString(conv.target_user?.nickname)
   const avatar = parseSqlNullString(conv.target_user?.avatar)
   await chatStore.openChat(conv.target_id, conv.conversation_type, name, avatar)
-  
+
   if (activeSessionType.value === 'group') {
     // Sync group store if needed
     // groupStore.setCurrentGroup(...) // logic needs to match
     await loadGroupMembers(conv.target_id)
   }
+
+  console.log('after handleConversationSelect, activeSessionType:', activeSessionType.value, 'showGroupSidebar:', showGroupSidebar.value)
 }
 
 const handleFriendChat = (friend: any) => {
+  console.log('handleFriendChat')
+
+  // Close sidebar first
+  showGroupSidebar.value = false
+  console.log('set showGroupSidebar to false')
+
   const userId = friend.friend_user?.id || friend.friend_id
   activeSessionType.value = 'private'
   chatStore.openChat(userId, 1, friend.remark || friend.friend_user?.nickname)
   activeTab.value = 'chats' // Switch to chat tab
+
+  console.log('after handleFriendChat, activeSessionType:', activeSessionType.value, 'showGroupSidebar:', showGroupSidebar.value)
 }
 
 const handleGroupSelect = async (group: any) => {
+  console.log('handleGroupSelect')
+
+  // Close sidebar first
+  showGroupSidebar.value = false
+  console.log('set showGroupSidebar to false')
+
+  await nextTick()
+
   activeSessionType.value = 'group'
   await groupStore.setCurrentGroup(group)
   chatStore.openChat(group.id, 2, group.name)
   await loadGroupMembers(group.id)
   // activeTab.value = 'chats' // Optional: stay on groups or switch? Switching is better for "Chat" context
+
+  console.log('after handleGroupSelect, activeSessionType:', activeSessionType.value, 'showGroupSidebar:', showGroupSidebar.value)
 }
 
 const handleBotSelect = (bot: any) => {
+  console.log('handleBotSelect')
+
   activeSessionType.value = 'ai'
+  showGroupSidebar.value = false
   aiStore.setCurrentBot(bot)
+
+  console.log('after handleBotSelect, activeSessionType:', activeSessionType.value, 'showGroupSidebar:', showGroupSidebar.value)
+}
+
+const toggleGroupSidebar = () => {
+  showGroupSidebar.value = !showGroupSidebar.value
 }
 
 const handleSendMessage = async (content: string) => {
@@ -276,9 +345,19 @@ const handleLogout = async () => {
   } catch {}
 }
 
-const showGroupMembers = () => {
-  ElMessage.info('查看群成员功能待实现 (Refactored)')
-  // logic to show dialog
+const handleGroupClose = async () => {
+  // Handle group close (e.g., after leaving or deleting)
+  showGroupSidebar.value = false
+  groupStore.clearCurrentGroup()
+  activeSessionType.value = null
+  await chatStore.loadConversations()
+}
+
+const handleScrollToMessage = (msg: any) => {
+  const messageId = msg.msg_id || msg.id
+  if (chatWindowRef.value && messageId) {
+    chatWindowRef.value.scrollToMessage(messageId)
+  }
 }
 
 const clearAiChat = async () => {
@@ -350,6 +429,16 @@ onMounted(async () => {
   }
 })
 
+// Watch activeSessionType to close sidebar when switching away from group
+watch(activeSessionType, (newType, oldType) => {
+  console.log('activeSessionType changed from', oldType, 'to', newType)
+  // Close sidebar when switching to non-group chat
+  if (newType !== 'group') {
+    showGroupSidebar.value = false
+    console.log('auto-close sidebar because newType is not group')
+  }
+})
+
 // Watch WS messages
 watch(wsMessages, (newMessages) => {
   if (newMessages.length > 0) {
@@ -369,6 +458,15 @@ watch(wsMessages, (newMessages) => {
       })
     }
   }
+})
+
+// Watchers for sidebar control
+watch(activeTab, () => {
+  showGroupSidebar.value = false
+})
+
+watch(() => chatStore.currentSession?.id, () => {
+  showGroupSidebar.value = false
 })
 
 </script>
@@ -458,6 +556,11 @@ watch(wsMessages, (newMessages) => {
   color: #67c23a;
 }
 
+.header-actions-wrapper {
+  display: flex;
+  gap: 8px;
+}
+
 /* 2. List Sidebar */
 .list-sidebar {
   width: 320px;
@@ -491,6 +594,24 @@ watch(wsMessages, (newMessages) => {
   flex-direction: column;
   background-color: var(--bg-chat);
   position: relative;
+  overflow: hidden;
+}
+
+.chat-container {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  position: relative; /* Ensure positioning context */
+}
+
+.sidebar-wrapper {
+  height: 100%;
+  flex-shrink: 0;
+}
+
+.chat-container :deep(.chat-window) {
+  flex: 1;
+  min-width: 0;
 }
 
 .empty-state {

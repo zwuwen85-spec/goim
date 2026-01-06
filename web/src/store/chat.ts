@@ -23,15 +23,15 @@ export const useChatStore = defineStore('chat', () => {
 
   const loadConversations = async () => {
     const response = await conversationApi.getList()
-    if (response.data.code === 0) {
-      conversations.value = response.data.conversations || []
+    if ((response as any).code === 0) {
+      conversations.value = (response as any).data?.conversations || []
     }
   }
 
   const loadFriends = async () => {
     const response = await friendApi.getFriends()
-    if (response.data.code === 0) {
-      friends.value = response.data.friends || []
+    if ((response as any).code === 0) {
+      friends.value = (response as any).data?.friends || []
     }
   }
 
@@ -53,7 +53,7 @@ export const useChatStore = defineStore('chat', () => {
         name: name || `Chat ${conversationId}`,
         avatar,
         unreadCount: 0,
-        messages: historyResponse.data?.messages || []
+        messages: (historyResponse as any)?.data?.messages || []
       }
       sessions.value.set(sessionKey, session)
     }
@@ -93,18 +93,18 @@ export const useChatStore = defineStore('chat', () => {
       content
     })
 
-    if (response.data.code === 0) {
+    if ((response as any).code === 0) {
       // Add message to current session
       const msg: Message = {
         id: Date.now(),
-        msg_id: response.data.msg_id,
+        msg_id: (response as any).data?.msg_id,
         from_user_id: currentUserId,
-        conversation_id: response.data.conversation_id,
-        conversation_type: response.data.conversation_type,
+        conversation_id: (response as any).data?.conversation_id,
+        conversation_type: (response as any).data?.conversation_type,
         msg_type: msgType,
         content,
-        seq: response.data.seq,
-        created_at: response.data.created_at
+        seq: (response as any).data?.seq,
+        created_at: (response as any).data?.created_at
       }
       currentSession.value.messages.push(msg)
       return true

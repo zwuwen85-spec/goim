@@ -26,10 +26,10 @@ build:
 	@cp cmd/comet/comet-example.toml $(BINARY_DIR)/comet.toml
 	@cp cmd/logic/logic-example.toml $(BINARY_DIR)/logic.toml
 	@cp cmd/job/job-example.toml $(BINARY_DIR)/job.toml
-	$(GOBUILD) -o $(BINARY_DIR)/comet $(CMD_DIR)/comet
-	$(GOBUILD) -o $(BINARY_DIR)/logic $(CMD_DIR)/logic
-	$(GOBUILD) -o $(BINARY_DIR)/job $(CMD_DIR)/job
-	$(GOBUILD) -o $(BINARY_DIR)/chatapi $(CMD_DIR)/chatapi
+	$(GOBUILD) -o $(BINARY_DIR)/comet ./$(CMD_DIR)/comet
+	$(GOBUILD) -o $(BINARY_DIR)/logic ./$(CMD_DIR)/logic
+	$(GOBUILD) -o $(BINARY_DIR)/job ./$(CMD_DIR)/job
+	$(GOBUILD) -o $(BINARY_DIR)/chatapi ./$(CMD_DIR)/chatapi
 	@echo "编译完成！"
 	@ls -lh $(BINARY_DIR)/
 

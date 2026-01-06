@@ -27,8 +27,10 @@
         <div
           v-for="(msg, index) in messages"
           :key="msg.id || index"
+          :id="'msg-' + (msg.msg_id || msg.id)"
+          :ref="(el) => el && registerMessage(msg.msg_id || msg.id, el as HTMLElement)"
           class="message-wrapper"
-          :class="{ 'is-me': isMe(msg) }"
+          :class="{ 'is-me': isMe(msg), 'highlighted': highlightedMessageId === (msg.msg_id || msg.id) }"
         >
           <div class="message-time-divider" v-if="showTimeDivider(msg, messages[index - 1])">
             <span>{{ formatTime(msg.timestamp || msg.created_at) }}</span>
@@ -117,12 +119,15 @@ const props = defineProps<{
   getSenderName?: (msg: any) => string
   getSenderAvatar?: (msg: any) => string
   getSenderStyle?: (msg: any) => any
+  highlightMessageId?: string | number
 }>()
 
 const emit = defineEmits(['send'])
 
 const inputValue = ref('')
 const messagesRef = ref<HTMLElement>()
+const messageMap = ref<Map<string | number, HTMLElement>>(new Map())
+const highlightedMessageId = ref<string | number | null>(null)
 
 const isMe = (msg: any) => {
   return msg.from_user_id === props.currentUserId || msg.role === 'user'
@@ -166,12 +171,56 @@ const scrollToBottom = () => {
   })
 }
 
+// Scroll to specific message
+const scrollToMessage = (messageId: string | number) => {
+  const element = messageMap.value.get(messageId)
+  if (element && messagesRef.value) {
+    // Clear previous highlight
+    highlightedMessageId.value = null
+
+    nextTick(() => {
+      // Set new highlight
+      highlightedMessageId.value = messageId
+
+      // Scroll the message into view
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+
+      // Remove highlight after 3 seconds
+      setTimeout(() => {
+        highlightedMessageId.value = null
+      }, 3000)
+    })
+  }
+}
+
+// Register message element
+const registerMessage = (messageId: string | number, element: HTMLElement) => {
+  messageMap.value.set(messageId, element)
+}
+
+// Unregister message element
+const unregisterMessage = (messageId: string | number) => {
+  messageMap.value.delete(messageId)
+}
+
+// Watch highlight prop for external control
+watch(() => props.highlightMessageId, (newId) => {
+  if (newId) {
+    scrollToMessage(newId)
+  }
+})
+
 watch(() => props.messages, () => {
   scrollToBottom()
 }, { deep: true })
 
 onMounted(() => {
   scrollToBottom()
+})
+
+// Expose method to parent
+defineExpose({
+  scrollToMessage
 })
 
 // Default helpers if not provided
@@ -369,5 +418,23 @@ const getSenderStyle = props.getSenderStyle || defaultGetSenderStyle
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Message highlight effect */
+.message-wrapper.highlighted {
+  animation: highlight-pulse 2s ease-in-out;
+}
+
+.message-wrapper.highlighted .message-bubble {
+  box-shadow: 0 0 0 3px var(--primary-color);
+}
+
+@keyframes highlight-pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
 }
 </style>
