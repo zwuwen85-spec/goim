@@ -8,10 +8,10 @@
           {{ title?.[0] || '?' }}
           <el-icon v-if="!title && !avatar"><UserFilled /></el-icon>
         </el-avatar>
-        <div class="header-info">
-          <div class="header-title">{{ title }}</div>
-          <div class="header-subtitle" v-if="subtitle">{{ subtitle }}</div>
-        </div>
+      </div>
+      <div class="header-center">
+        <div class="header-title">{{ title }}</div>
+        <div class="header-subtitle" v-if="subtitle">{{ subtitle }}</div>
       </div>
       <div class="header-actions">
         <slot name="actions"></slot>
@@ -28,9 +28,8 @@
           v-for="(msg, index) in messages"
           :key="msg.id || index"
           :id="'msg-' + (msg.msg_id || msg.id)"
-          :ref="(el) => el && registerMessage(msg.msg_id || msg.id, el as HTMLElement)"
           class="message-wrapper"
-          :class="{ 'is-me': isMe(msg), 'highlighted': highlightedMessageId === (msg.msg_id || msg.id) }"
+          :class="{ 'is-me': isMe(msg) }"
         >
           <div class="message-time-divider" v-if="showTimeDivider(msg, messages[index - 1])">
             <span>{{ formatTime(msg.timestamp || msg.created_at) }}</span>
@@ -119,15 +118,12 @@ const props = defineProps<{
   getSenderName?: (msg: any) => string
   getSenderAvatar?: (msg: any) => string
   getSenderStyle?: (msg: any) => any
-  highlightMessageId?: string | number
 }>()
 
 const emit = defineEmits(['send'])
 
 const inputValue = ref('')
 const messagesRef = ref<HTMLElement>()
-const messageMap = ref<Map<string | number, HTMLElement>>(new Map())
-const highlightedMessageId = ref<string | number | null>(null)
 
 const isMe = (msg: any) => {
   return msg.from_user_id === props.currentUserId || msg.role === 'user'
@@ -171,43 +167,23 @@ const scrollToBottom = () => {
   })
 }
 
-// Scroll to specific message
-const scrollToMessage = (messageId: string | number) => {
-  const element = messageMap.value.get(messageId)
-  if (element && messagesRef.value) {
-    // Clear previous highlight
-    highlightedMessageId.value = null
-
-    nextTick(() => {
-      // Set new highlight
-      highlightedMessageId.value = messageId
-
-      // Scroll the message into view
+const scrollToMessage = (messageId: number | string) => {
+  nextTick(() => {
+    const elementId = `msg-${messageId}`
+    const element = document.getElementById(elementId)
+    if (element) {
       element.scrollIntoView({ behavior: 'smooth', block: 'center' })
-
-      // Remove highlight after 3 seconds
+      element.classList.add('highlight-message')
       setTimeout(() => {
-        highlightedMessageId.value = null
-      }, 3000)
-    })
-  }
+        element.classList.remove('highlight-message')
+      }, 2000)
+    }
+  })
 }
 
-// Register message element
-const registerMessage = (messageId: string | number, element: HTMLElement) => {
-  messageMap.value.set(messageId, element)
-}
-
-// Unregister message element
-const unregisterMessage = (messageId: string | number) => {
-  messageMap.value.delete(messageId)
-}
-
-// Watch highlight prop for external control
-watch(() => props.highlightMessageId, (newId) => {
-  if (newId) {
-    scrollToMessage(newId)
-  }
+defineExpose({
+  scrollToBottom,
+  scrollToMessage
 })
 
 watch(() => props.messages, () => {
@@ -216,11 +192,6 @@ watch(() => props.messages, () => {
 
 onMounted(() => {
   scrollToBottom()
-})
-
-// Expose method to parent
-defineExpose({
-  scrollToMessage
 })
 
 // Default helpers if not provided
@@ -251,6 +222,7 @@ const getSenderStyle = props.getSenderStyle || defaultGetSenderStyle
   justify-content: space-between;
   background: rgba(255, 255, 255, 0.8);
   backdrop-filter: blur(10px);
+  position: relative;
 }
 
 .header-left {
@@ -259,9 +231,14 @@ const getSenderStyle = props.getSenderStyle || defaultGetSenderStyle
   gap: 12px;
 }
 
-.header-info {
+.header-center {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
+  align-items: center;
+  text-align: center;
 }
 
 .header-title {
@@ -420,21 +397,17 @@ const getSenderStyle = props.getSenderStyle || defaultGetSenderStyle
   justify-content: center;
 }
 
-/* Message highlight effect */
-.message-wrapper.highlighted {
-  animation: highlight-pulse 2s ease-in-out;
+.highlight-message .message-bubble {
+  animation: highlight 2s ease-out;
 }
 
-.message-wrapper.highlighted .message-bubble {
-  box-shadow: 0 0 0 3px var(--primary-color);
-}
-
-@keyframes highlight-pulse {
-  0%, 100% {
-    transform: scale(1);
-  }
-  50% {
+@keyframes highlight {
+  0%, 20% {
+    background-color: var(--primary-light);
     transform: scale(1.02);
+  }
+  100% {
+    transform: scale(1);
   }
 }
 </style>

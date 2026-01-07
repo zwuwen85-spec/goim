@@ -75,10 +75,10 @@
       
       <!-- Content Lists -->
       <div class="sidebar-content">
-        <ConversationList 
-          v-if="activeTab === 'chats'" 
-          @select="handleConversationSelect" 
-        />
+        <template v-if="activeTab === 'chats'">
+           <ConversationList @select="handleConversationSelect" />
+        </template>
+        
         <FriendManager 
           v-else-if="activeTab === 'friends'" 
           @chat="handleFriendChat" 
@@ -100,6 +100,7 @@
         <div class="chat-container">
           <ChatWindow
             ref="chatWindowRef"
+            :key="chatWindowKey"
             :messages="currentMessages"
             :current-user-id="userStore.currentUser?.id || 0"
             :title="sessionTitle"
@@ -199,6 +200,13 @@ const activeSessionType = ref<'private' | 'group' | 'ai' | null>(null)
 const showGroupSidebar = ref(false)
 const chatWindowRef = ref<InstanceType<typeof ChatWindow>>()
 
+const chatWindowKey = computed(() => {
+  if (activeSessionType.value === 'ai') {
+    return `ai-${aiStore.currentBot?.id}`
+  }
+  return `${activeSessionType.value}-${chatStore.currentSession?.id}`
+})
+
 // WebSocket
 const { messages: wsMessages, connect, disconnect } = useWebSocket('ws://localhost:3102/sub')
 
@@ -261,7 +269,24 @@ const handleConversationSelect = async (conv: any) => {
 
   await nextTick()
 
+  // Handle AI conversation
+  if (conv.conversation_type === 'ai') {
+    activeSessionType.value = 'ai'
+    // Set chatStore session to null to avoid conflict
+    chatStore.currentSession = null
+    
+    // Find bot and set it
+    const bot = aiStore.getBotById(conv.target_id) || aiStore.defaultBots.find(b => b.id === conv.target_id)
+    if (bot) {
+      aiStore.setCurrentBot(bot)
+    }
+    return
+  }
+
   activeSessionType.value = conv.conversation_type === 2 ? 'group' : 'private'
+  // Clear AI bot
+  aiStore.currentBot = null
+  
   const name = parseSqlNullString(conv.target_user?.nickname)
   const avatar = parseSqlNullString(conv.target_user?.avatar)
   await chatStore.openChat(conv.target_id, conv.conversation_type, name, avatar)
@@ -276,18 +301,25 @@ const handleConversationSelect = async (conv: any) => {
 }
 
 const handleFriendChat = (friend: any) => {
-  console.log('handleFriendChat')
-
-  // Close sidebar first
-  showGroupSidebar.value = false
-  console.log('set showGroupSidebar to false')
-
+  console.log('handleFriendChat', friend)
+  
+  // 1. Prepare data
   const userId = friend.friend_user?.id || friend.friend_id
-  activeSessionType.value = 'private'
-  chatStore.openChat(userId, 1, friend.remark || friend.friend_user?.nickname)
-  activeTab.value = 'chats' // Switch to chat tab
+  const nickname = friend.remark || friend.friend_user?.nickname || `User ${userId}`
+  const avatar = friend.friend_user?.avatar || ''
 
-  console.log('after handleFriendChat, activeSessionType:', activeSessionType.value, 'showGroupSidebar:', showGroupSidebar.value)
+  // 2. Switch UI immediately for best responsiveness
+  showGroupSidebar.value = false
+  activeTab.value = 'chats'
+  activeSessionType.value = 'private'
+
+  // 3. Trigger store action (fire and forget / reactive update)
+  chatStore.openChat(userId, 1, nickname, avatar).then(() => {
+    console.log('Chat session opened successfully')
+  }).catch(e => {
+    console.error('Failed to open chat session', e)
+    ElMessage.error('无法打开聊天窗口')
+  })
 }
 
 const handleGroupSelect = async (group: any) => {
@@ -303,19 +335,28 @@ const handleGroupSelect = async (group: any) => {
   await groupStore.setCurrentGroup(group)
   chatStore.openChat(group.id, 2, group.name)
   await loadGroupMembers(group.id)
-  // activeTab.value = 'chats' // Optional: stay on groups or switch? Switching is better for "Chat" context
+  activeTab.value = 'chats' // Switch to chat tab
 
   console.log('after handleGroupSelect, activeSessionType:', activeSessionType.value, 'showGroupSidebar:', showGroupSidebar.value)
 }
 
 const handleBotSelect = (bot: any) => {
-  console.log('handleBotSelect')
+  console.log('handleBotSelect', bot)
 
-  activeSessionType.value = 'ai'
+  // 1. Prepare UI state
   showGroupSidebar.value = false
+  activeSessionType.value = 'ai'
+  
+  // 2. Set current bot in store
   aiStore.setCurrentBot(bot)
-
-  console.log('after handleBotSelect, activeSessionType:', activeSessionType.value, 'showGroupSidebar:', showGroupSidebar.value)
+  
+  // 3. Switch to chats tab
+  activeTab.value = 'chats'
+  
+  // Clear chat session to avoid highlighting wrong item
+  chatStore.currentSession = null
+  
+  console.log('handleBotSelect completed')
 }
 
 const toggleGroupSidebar = () => {

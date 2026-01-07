@@ -42,7 +42,8 @@ export interface User {
   username: string
   nickname: string
   avatar?: string
-  status: number
+  status?: number
+  created_at?: string
 }
 
 export interface Message {

@@ -195,6 +195,7 @@ import type { Friend, FriendRequest, User } from '../api/chat'
 import { parseSqlNullString } from '../utils/format'
 
 const chatStore = useChatStore()
+const emit = defineEmits(['chat'])
 
 const subTab = ref('list')
 const searchKeyword = ref('')
@@ -244,14 +245,13 @@ const handleSearch = () => {
 }
 
 const startChat = (friend: Friend) => {
-  const userId = friend.friend_user?.id || friend.friend_id
-  chatStore.openChat(userId, 1, friend.remark || getNickname(friend.friend_user) || friend.remark)
-}
+    emit('chat', friend)
+  }
 
 const handleFriendCommand = async (command: string, friend: Friend) => {
   switch (command) {
     case 'chat':
-      startChat(friend)
+      emit('chat', friend)
       break
     case 'remark':
       currentFriend.value = friend
@@ -292,7 +292,7 @@ const handleDeleteFriend = async (friend: Friend) => {
       }
     )
 
-    const response = await friendApi.deleteFriend(friend.friend_id)
+    const response = await friendApi.deleteFriend(friend.id)
     if ((response as any).code === 0) {
       ElMessage.success('已删除好友')
       await chatStore.loadFriends()
@@ -364,7 +364,7 @@ const loadFriendRequests = async () => {
   try {
     const response = await friendApi.getRequests()
     if ((response as any).code === 0) {
-      pendingRequests.value = ((response as any).data.requests || []).filter((r: FriendRequest) => r.status === 1)
+      pendingRequests.value = ((response as any).data.requests || []).filter((r: FriendRequest) => r.status === 0)
     }
   } catch (error: any) {
     console.error('Failed to load friend requests:', error)
