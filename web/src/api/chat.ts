@@ -42,7 +42,8 @@ export interface User {
   username: string
   nickname: string
   avatar?: string
-  status: number
+  status?: number
+  created_at?: string
 }
 
 export interface Message {
@@ -106,9 +107,10 @@ export interface GroupMember {
   id: number
   group_id: number
   user_id: number
-  role: string // 'owner', 'admin', 'member'
+  role: number // 1: member, 2: admin, 3: owner
   nickname?: string
   joined_at: string
+  mute_until?: string
   user?: User
 }
 
@@ -215,7 +217,29 @@ export const groupApi = {
   leave: (id: number) => api.delete(`/group/leave/${id}`),
 
   update: (id: number, data: { name?: string }) =>
-    api.put(`/group/info/${id}`, data)
+    api.put(`/group/info/${id}`, data),
+
+  // New: invite, kick, manage members
+  invite: (id: number, data: { user_id: number; role?: number }) =>
+    api.post(`/group/invite/${id}`, data),
+
+  kick: (id: number, userId: number) =>
+    api.delete(`/group/kick/${id}/${userId}`),
+
+  setMemberRole: (id: number, userId: number, role: number) =>
+    api.put(`/group/role/${id}/${userId}`, { role }),
+
+  setMemberNickname: (id: number, userId: number, nickname: string) =>
+    api.put(`/group/nickname/${id}/${userId}`, { nickname }),
+
+  muteMember: (id: number, userId: number, duration: number) =>
+    api.put(`/group/mute/${id}/${userId}`, { duration }),
+
+  transferOwnership: (id: number, userId: number) =>
+    api.post(`/group/transfer/${id}/${userId}`),
+
+  deleteGroup: (id: number) =>
+    api.delete(`/group/${id}`)
 }
 
 // AI API

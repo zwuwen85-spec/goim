@@ -195,6 +195,7 @@ import type { Friend, FriendRequest, User } from '../api/chat'
 import { parseSqlNullString } from '../utils/format'
 
 const chatStore = useChatStore()
+const emit = defineEmits(['chat'])
 
 const subTab = ref('list')
 const searchKeyword = ref('')
@@ -244,14 +245,13 @@ const handleSearch = () => {
 }
 
 const startChat = (friend: Friend) => {
-  const userId = friend.friend_user?.id || friend.friend_id
-  chatStore.openChat(userId, 1, friend.remark || getNickname(friend.friend_user) || friend.remark)
-}
+    emit('chat', friend)
+  }
 
 const handleFriendCommand = async (command: string, friend: Friend) => {
   switch (command) {
     case 'chat':
-      startChat(friend)
+      emit('chat', friend)
       break
     case 'remark':
       currentFriend.value = friend

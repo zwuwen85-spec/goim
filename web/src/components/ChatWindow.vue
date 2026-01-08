@@ -8,10 +8,10 @@
           {{ title?.[0] || '?' }}
           <el-icon v-if="!title && !avatar"><UserFilled /></el-icon>
         </el-avatar>
-        <div class="header-info">
-          <div class="header-title">{{ title }}</div>
-          <div class="header-subtitle" v-if="subtitle">{{ subtitle }}</div>
-        </div>
+      </div>
+      <div class="header-center">
+        <div class="header-title">{{ title }}</div>
+        <div class="header-subtitle" v-if="subtitle">{{ subtitle }}</div>
       </div>
       <div class="header-actions">
         <slot name="actions"></slot>
@@ -27,6 +27,7 @@
         <div
           v-for="(msg, index) in messages"
           :key="msg.id || index"
+          :id="'msg-' + (msg.msg_id || msg.id)"
           class="message-wrapper"
           :class="{ 'is-me': isMe(msg) }"
         >
@@ -166,6 +167,25 @@ const scrollToBottom = () => {
   })
 }
 
+const scrollToMessage = (messageId: number | string) => {
+  nextTick(() => {
+    const elementId = `msg-${messageId}`
+    const element = document.getElementById(elementId)
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      element.classList.add('highlight-message')
+      setTimeout(() => {
+        element.classList.remove('highlight-message')
+      }, 2000)
+    }
+  })
+}
+
+defineExpose({
+  scrollToBottom,
+  scrollToMessage
+})
+
 watch(() => props.messages, () => {
   scrollToBottom()
 }, { deep: true })
@@ -202,6 +222,7 @@ const getSenderStyle = props.getSenderStyle || defaultGetSenderStyle
   justify-content: space-between;
   background: rgba(255, 255, 255, 0.8);
   backdrop-filter: blur(10px);
+  position: relative;
 }
 
 .header-left {
@@ -210,9 +231,14 @@ const getSenderStyle = props.getSenderStyle || defaultGetSenderStyle
   gap: 12px;
 }
 
-.header-info {
+.header-center {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
+  align-items: center;
+  text-align: center;
 }
 
 .header-title {
@@ -369,5 +395,19 @@ const getSenderStyle = props.getSenderStyle || defaultGetSenderStyle
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.highlight-message .message-bubble {
+  animation: highlight 2s ease-out;
+}
+
+@keyframes highlight {
+  0%, 20% {
+    background-color: var(--primary-light);
+    transform: scale(1.02);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 </style>

@@ -145,8 +145,12 @@ func NewConversationDAO(mysql *MySQL) *ConversationDAO {
 func (d *ConversationDAO) GetConversations(ctx context.Context, userID int64) ([]*model.Conversation, error) {
 	query := `
 		SELECT c.id, c.user_id, c.target_id, c.conversation_type, c.unread_count,
-		       c.last_msg_id, c.last_msg_content, c.last_msg_time, c.is_pinned, c.is_muted, c.updated_at
+		       c.last_msg_id, c.last_msg_content, c.last_msg_time, c.is_pinned, c.is_muted, c.updated_at,
+		       u.id, u.username, u.password_hash, u.nickname, u.avatar_url, u.status, u.signature, u.created_at, u.updated_at,
+		       g.id, g.group_no, g.name, g.avatar_url, g.owner_id, g.max_members, g.join_type, g.mute_all, g.created_at, g.updated_at
 		FROM conversations c
+		LEFT JOIN users u ON (c.conversation_type = 1 AND c.target_id = u.id)
+		LEFT JOIN ` + "`groups`" + ` g ON (c.conversation_type = 2 AND c.target_id = g.id)
 		WHERE c.user_id = ?
 		ORDER BY c.is_pinned DESC, c.updated_at DESC
 	`
@@ -158,7 +162,7 @@ func (d *ConversationDAO) GetConversations(ctx context.Context, userID int64) ([
 
 	var conversations []*model.Conversation
 	for rows.Next() {
-		conv, err := d.scanConversation(rows)
+		conv, err := d.scanConversationWithDetails(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -237,6 +241,44 @@ func (d *ConversationDAO) scanConversation(scanner interface{ Scan(...interface{
 	if err != nil {
 		return nil, err
 	}
+	return &conv, nil
+}
+
+// scanConversationWithDetails scans a conversation with user/group details
+func (d *ConversationDAO) scanConversationWithDetails(rows *sql.Rows) (*model.Conversation, error) {
+	var conv model.Conversation
+	var user model.User
+	var group model.Group
+
+	// Scan all columns
+	err := rows.Scan(
+		&conv.ID, &conv.UserID, &conv.TargetID, &conv.ConversationType,
+		&conv.UnreadCount, &conv.LastMsgID, &conv.LastMsgContent,
+		&conv.LastMsgTime, &conv.IsPinned, &conv.IsMuted, &conv.UpdatedAt,
+		// User fields
+		&user.ID, &user.Username, &user.PasswordHash, &user.Nickname,
+		&user.AvatarURL, &user.Status, &user.Signature,
+		&user.CreatedAt, &user.UpdatedAt,
+		// Group fields
+		&group.ID, &group.GroupNo, &group.Name, &group.AvatarURL,
+		&group.OwnerID, &group.MaxMembers, &group.JoinType, &group.MuteAll,
+		&group.CreatedAt, &group.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Set TargetUser for single chat
+	if conv.ConversationType == 1 && user.ID > 0 {
+		user.PasswordHash = "" // Don't return password hash
+		conv.TargetUser = &user
+	}
+
+	// Set TargetGroup for group chat
+	if conv.ConversationType == 2 && group.ID > 0 {
+		conv.TargetGroup = &group
+	}
+
 	return &conv, nil
 }
 

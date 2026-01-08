@@ -122,6 +122,71 @@ func (d *GroupDAO) RemoveMember(ctx context.Context, groupID, userID int64) erro
 	return err
 }
 
+// UpdateMemberRole updates a member's role in the group
+func (d *GroupDAO) UpdateMemberRole(ctx context.Context, groupID, userID int64, role int8) error {
+	query := `UPDATE group_members SET role = ? WHERE group_id = ? AND user_id = ?`
+	_, err := d.mysql.Exec(ctx, query, role, groupID, userID)
+	return err
+}
+
+// UpdateMemberNickname updates a member's nickname in the group
+func (d *GroupDAO) UpdateMemberNickname(ctx context.Context, groupID, userID int64, nickname string) error {
+	query := `UPDATE group_members SET nickname = ? WHERE group_id = ? AND user_id = ?`
+	_, err := d.mysql.Exec(ctx, query, nickname, groupID, userID)
+	return err
+}
+
+// SetMemberMute sets/unsets mute for a member
+func (d *GroupDAO) SetMemberMute(ctx context.Context, groupID, userID int64, muteUntil *time.Time) error {
+	query := `UPDATE group_members SET mute_until = ? WHERE group_id = ? AND user_id = ?`
+	_, err := d.mysql.Exec(ctx, query, muteUntil, groupID, userID)
+	return err
+}
+
+// GetMemberRole gets a member's role in a group
+func (d *GroupDAO) GetMemberRole(ctx context.Context, groupID, userID int64) (int8, error) {
+	query := `SELECT role FROM group_members WHERE group_id = ? AND user_id = ?`
+	var role int8
+	err := d.mysql.QueryRow(ctx, query, groupID, userID).Scan(&role)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return role, err
+}
+
+// DeleteGroup deletes a group (by owner)
+func (d *GroupDAO) DeleteGroup(ctx context.Context, groupID int64) error {
+	// First delete all members
+	_, err := d.mysql.Exec(ctx, `DELETE FROM group_members WHERE group_id = ?`, groupID)
+	if err != nil {
+		return err
+	}
+	// Then delete the group
+	_, err = d.mysql.Exec(ctx, `DELETE FROM `+"`groups`"+` WHERE id = ?`, groupID)
+	return err
+}
+
+// TransferOwnership transfers group ownership to another member
+func (d *GroupDAO) TransferOwnership(ctx context.Context, groupID, newOwnerID int64) error {
+	// Start transaction
+	// Update new owner to owner role
+	_, err := d.mysql.Exec(ctx, `UPDATE group_members SET role = 3 WHERE group_id = ? AND user_id = ?`, groupID, newOwnerID)
+	if err != nil {
+		return err
+	}
+	// Update old owner to admin
+	_, err = d.mysql.Exec(ctx, `
+		UPDATE group_members SET role = 2
+		WHERE group_id = ? AND user_id = (SELECT owner_id FROM `+"`groups`"+` WHERE id = ?)
+	`, groupID, groupID)
+	if err != nil {
+		return err
+	}
+	// Update group owner
+	_, err = d.mysql.Exec(ctx, `UPDATE `+"`groups`"+` SET owner_id = ? WHERE id = ?`, newOwnerID, groupID)
+	return err
+}
+
 // UpdateGroup updates group information
 func (d *GroupDAO) UpdateGroup(ctx context.Context, group *model.Group) error {
 	query := `UPDATE ` + "`groups`" + ` SET name = ?, avatar_url = ?, max_members = ?, join_type = ?, mute_all = ? WHERE id = ?`

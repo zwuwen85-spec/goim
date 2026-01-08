@@ -2,6 +2,7 @@ package model
 
 import (
 	"database/sql"
+	"encoding/json"
 	"time"
 )
 
@@ -11,11 +12,53 @@ type User struct {
 	Username     string         `json:"username" db:"username"`
 	PasswordHash string         `json:"-" db:"password_hash"`
 	Nickname     string         `json:"nickname" db:"nickname"`
-	AvatarURL    sql.NullString `json:"avatar_url" db:"avatar_url"`
+	AvatarURL    sql.NullString `json:"-" db:"avatar_url"` // Custom marshaling
 	Status       int8           `json:"status" db:"status"` // 1=online, 2=offline, 3=busy
 	Signature    sql.NullString `json:"signature" db:"signature"`
 	CreatedAt    time.Time      `json:"created_at" db:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at" db:"updated_at"`
+}
+
+// MarshalJSON custom JSON marshaling for User
+func (u User) MarshalJSON() ([]byte, error) {
+	type Alias User
+	avatar := ""
+	if u.AvatarURL.Valid {
+		avatar = u.AvatarURL.String
+	}
+	signature := ""
+	if u.Signature.Valid {
+		signature = u.Signature.String
+	}
+	return json.Marshal(&struct {
+		Avatar   string `json:"avatar,omitempty"`
+		Signature string `json:"signature,omitempty"`
+		*Alias
+	}{
+		Avatar:   avatar,
+		Signature: signature,
+		Alias:    (*Alias)(&u),
+	})
+}
+
+// UnmarshalJSON custom JSON unmarshaling for User
+func (u *User) UnmarshalJSON(data []byte) error {
+	type Alias User
+	aux := &struct {
+		Avatar *string `json:"avatar"`
+		*Alias
+	}{
+		Alias: (*Alias)(u),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.Avatar != nil {
+		u.AvatarURL = sql.NullString{String: *aux.Avatar, Valid: true}
+	} else {
+		u.AvatarURL = sql.NullString{Valid: false}
+	}
+	return nil
 }
 
 // UserToken represents an authentication token
