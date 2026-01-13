@@ -137,7 +137,7 @@
               @input="handleSearchMessages"
             />
           </div>
-          <div class="history-list" v-loading="loadingHistory" ref="historyListRef" @scroll="handleHistoryScroll">
+          <div class="history-list" v-loading="loadingHistory">
             <div
               v-for="msg in filteredMessages"
               :key="msg.id"
@@ -145,7 +145,11 @@
               @click="handleScrollToMessage(msg)"
             >
               <div class="msg-header">
-                <span class="msg-sender">{{ getSenderName(msg) }}</span>
+                <div class="sender-info">
+                  <span class="msg-sender">{{ getSenderName(msg) }}</span>
+                  <el-tag v-if="getSenderRole(msg) === 3" size="small" type="danger" effect="plain" class="role-tag">群主</el-tag>
+                  <el-tag v-if="getSenderRole(msg) === 2" size="small" type="warning" effect="plain" class="role-tag">管理员</el-tag>
+                </div>
                 <span class="msg-time">{{ formatTime(msg.created_at) }}</span>
               </div>
               <div class="msg-content">{{ getMessageContent(msg.content) }}</div>
@@ -153,15 +157,8 @@
             <div v-if="filteredMessages.length === 0 && !loadingHistory" class="empty-history">
               暂无历史消息
             </div>
-            <div v-if="loadingHistory" class="loading-more">
-              <el-icon class="is-loading"><Loading /></el-icon> 加载中...
-            </div>
-            <div v-if="!hasMore && filteredMessages.length > 0" class="no-more">
-              没有更多消息了
-            </div>
-            <div v-if="hasMore && !loadingHistory" class="load-more-manual" @click="loadMoreHistory">
-              <span class="text">点击加载更多历史消息</span>
-              <el-icon><ArrowDown /></el-icon>
+            <div v-if="hasMore" class="load-more" @click="loadMoreHistory">
+              加载更多
             </div>
           </div>
         </div>
@@ -175,34 +172,28 @@
         filterable
         remote
         reserve-keyword
-        placeholder="搜索用户ID或昵称（边输入边搜索）"
-        :remote-method="handleSearch"
-        :loading="searchLoading"
-        loading-text="正在搜索..."
-        no-data-text="未找到匹配用户"
+        placeholder="输入用户名搜索"
+        :remote-method="searchUsers"
+        :loading="searchingUsers"
         style="width: 100%"
-        default-first-option
       >
         <el-option
-          v-for="item in searchResults"
-          :key="item.id"
-          :label="item.nickname + ' (ID:' + item.id + ')'"
-          :value="item.id"
+          v-for="user in searchUserResults"
+          :key="user.id"
+          :label="user.nickname"
+          :value="user.id"
         >
-          <div style="display: flex; align-items: center; justify-content: space-between">
-            <div style="display: flex; align-items: center; gap: 8px">
-              <el-avatar :size="24" :src="item.avatar">{{ item.nickname?.[0] }}</el-avatar>
-              <span>{{ item.nickname }}</span>
-            </div>
-            <span style="color: var(--el-text-color-secondary); font-size: 12px">
-              ID: {{ item.id }}
-            </span>
+          <div class="user-option">
+            <el-avatar :size="24" :src="user.avatar" style="margin-right: 8px">
+              {{ user.nickname?.[0] }}
+            </el-avatar>
+            <span>{{ user.nickname }} (ID: {{ user.id }})</span>
           </div>
         </el-option>
       </el-select>
       <template #footer>
         <el-button @click="showInviteDialog = false">取消</el-button>
-        <el-button type="primary" @click="handleInviteMember">邀请</el-button>
+        <el-button type="primary" @click="handleInviteMember" :disabled="!inviteUserId">邀请</el-button>
       </template>
     </el-dialog>
 
@@ -225,15 +216,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import {
-  ChatDotRound, Plus, Search, ArrowDown, MoreFilled, Close, Loading
+  ChatDotRound, Plus, Search, ArrowDown, MoreFilled, Close
 } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox, ElTag } from 'element-plus'
-import { groupApi, messageApi, authApi, type Group, type GroupMember, type Message, type User } from '../api/chat'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { groupApi, messageApi, authApi, type Group, type GroupMember, type Message } from '../api/chat'
 import { useUserStore } from '../store/user'
 import { useGroupStore } from '../store/group'
-import { useChatStore } from '../store/chat'
 import { parseSqlNullString } from '../utils/format'
 
 const props = defineProps<{
@@ -244,55 +234,23 @@ const emit = defineEmits(['close', 'close-sidebar', 'scroll-to-message'])
 
 const userStore = useUserStore()
 const groupStore = useGroupStore()
-const chatStore = useChatStore()
 
 const activeTab = ref('info')
 const memberSearch = ref('')
 const messageSearch = ref('')
 const showInviteDialog = ref(false)
 const showTransferDialog = ref(false)
-const inviteUserId = ref('') // This will now store the selected user ID (number or string)
-const searchLoading = ref(false)
-const searchResults = ref<User[]>([])
-let searchTimeout: ReturnType<typeof setTimeout> | null = null
-
-const handleSearch = (query: string) => {
-  if (query.trim().length === 0) {
-    searchResults.value = []
-    return
-  }
-  
-  searchLoading.value = true
-  
-  // Debounce logic
-  if (searchTimeout) {
-    clearTimeout(searchTimeout)
-  }
-  
-  searchTimeout = setTimeout(async () => {
-    try {
-      const res = await authApi.searchUsers(query)
-      if ((res as any).code === 0) {
-        searchResults.value = (res as any).data?.users || []
-      }
-    } catch (error) {
-      console.error(error)
-      searchResults.value = []
-    } finally {
-      searchLoading.value = false
-    }
-  }, 300) // 300ms delay for better UX
-}
-
+const inviteUserId = ref('')
 const transferUserId = ref('')
 const loadingHistory = ref(false)
 const historyMessages = ref<Message[]>([])
 const hasMore = ref(true)
 const currentUserId = userStore.currentUser?.id || 0
+const searchingUsers = ref(false)
+const searchUserResults = ref<any[]>([])
 
 // Group data
 const members = computed(() => groupStore.members)
-const groupInfo = ref<any>({})
 
 // Computed
 const groupColor = computed(() => {
@@ -303,28 +261,24 @@ const groupColor = computed(() => {
 
 const getMemberDisplayName = (member: GroupMember | undefined) => {
   if (!member) return '未知'
+  // Use try-catch for safety
   try {
-    // Priority: Group Nickname -> User Nickname -> '未知'
     let name = parseSqlNullString(member.nickname) || parseSqlNullString(member.user?.nickname) || ''
-    
-    // Handle potential JSON string format
     if (name && name.startsWith('{')) {
       try {
         const parsed = JSON.parse(name)
-        name = parsed.String || ''
+        return parsed.String || '未知'
       } catch {
-        // keep original name if parse fails
+        return name
       }
     }
     
-    // Fallback if empty
-    if (!name) return '未知'
-    
-    // Clean up: Remove redundant role suffixes if they exist in the name itself
-    // User complaint: "Alice群主" should just be "Alice" if there is a "群主" tag
-    name = name.replace(/群主$/, '').replace(/管理员$/, '')
-    
-    return name
+    // 移除可能包含的角色后缀（针对种子数据或旧数据）
+    if (name) {
+      name = name.replace(/群主$/, '').replace(/管理员$/, '')
+    }
+
+    return name || '未知'
   } catch (e) {
     console.warn('Error parsing member name:', e)
     return '未知'
@@ -371,40 +325,33 @@ const filteredMessages = computed(() => {
 const getSenderName = (msg: Message) => {
   if (msg.from_user_id === currentUserId) return '我'
   const member = members.value.find(m => m.user_id === msg.from_user_id)
-  if (member) {
-    return getMemberDisplayName(member)
-  }
-  // Fallback for non-members or if member not found
-  if (msg.from_user) {
-    let name = parseSqlNullString(msg.from_user.nickname)
-    if (name && name.startsWith('{')) {
-      try {
-        const parsed = JSON.parse(name)
-        return parsed.String || name
-      } catch {
-        return name
-      }
-    }
-    return name || `用户${msg.from_user_id}`
-  }
-  return `用户${msg.from_user_id}`
+  return getMemberDisplayName(member) || `用户${msg.from_user_id}`
+}
+
+const getSenderRole = (msg: Message) => {
+  const member = members.value.find(m => m.user_id === msg.from_user_id)
+  return member?.role
 }
 
 const formatTime = (time: string) => {
   const date = new Date(time)
   const now = new Date()
-  const diff = now.getTime() - date.getTime()
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-
-  if (days === 0) {
+  
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const targetDate = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  
+  const diffTime = today.getTime() - targetDate.getTime()
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
+  
+  if (diffDays === 0) {
     return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-  } else if (days === 1) {
+  } else if (diffDays === 1) {
     return '昨天 ' + date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-  } else if (days < 7) {
+  } else if (diffDays < 7 && diffDays > 1) {
     const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
     return weekdays[date.getDay()] + ' ' + date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   } else {
-    return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+    return date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
   }
 }
 
@@ -427,14 +374,8 @@ const handleSearchMessages = async () => {
       limit: 100
     })
     if ((response as any).code === 0) {
-      const msgs = (response as any).data?.messages || []
-      // 按照时间降序排序（最新的在最上面）
-      historyMessages.value = [...msgs].sort((a: Message, b: Message) => {
-        const t1 = new Date(b.created_at).getTime()
-        const t2 = new Date(a.created_at).getTime()
-        return t1 - t2
-      })
-      hasMore.value = false // Search results are not paginated currently
+      // Backend returns [Old...New], we reverse to get [New...Old] (Date Descending)
+      historyMessages.value = (response as any).data?.messages?.reverse() || []
     }
   } catch (error) {
     console.error('Failed to search messages:', error)
@@ -445,33 +386,21 @@ const handleSearchMessages = async () => {
 
 const loadMoreHistory = async () => {
   if (!props.group || historyMessages.value.length === 0) return
-  // Find the oldest message (which is at the bottom of the list in Newest->Oldest view)
+  // List is [New...Old], so last item is Oldest. We want even older.
   const lastSeq = historyMessages.value[historyMessages.value.length - 1].seq
-  
   loadingHistory.value = true
   try {
     const response = await messageApi.getHistory({
       conversation_id: props.group.id,
       conversation_type: 2,
       last_seq: lastSeq,
-      limit: 15
+      limit: 50
     })
     if ((response as any).code === 0) {
       const newMessages = (response as any).data?.messages || []
-      
-      if (newMessages.length === 0) {
-        hasMore.value = false
-        return
-      }
-
-      // Sort new messages descending too
-      const sortedNewMessages = [...newMessages].sort((a: Message, b: Message) => {
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      })
-      
-      // Append to the end (bottom)
-      historyMessages.value.push(...sortedNewMessages)
-      hasMore.value = newMessages.length >= 15
+      // Append new messages and sort by seq descending (Newest to Oldest) to ensure correct order
+      historyMessages.value = [...historyMessages.value, ...newMessages].sort((a, b) => b.seq - a.seq)
+      hasMore.value = newMessages.length >= 50
     }
   } catch (error) {
     console.error('Failed to load more history:', error)
@@ -480,45 +409,64 @@ const loadMoreHistory = async () => {
   }
 }
 
-const historyListRef = ref<HTMLElement>()
-
-const handleHistoryScroll = () => {
-  const el = historyListRef.value
-  if (!el) return
-
-  if (loadingHistory.value || !hasMore.value) return
-  
-  // Debug scroll
-  // console.log('Scroll:', Math.ceil(el.scrollTop), el.scrollHeight, el.clientHeight)
-
-  // Use a larger threshold and Math.ceil for robustness
-  const distanceToBottom = el.scrollHeight - Math.ceil(el.scrollTop) - el.clientHeight
-  const isBottom = distanceToBottom < 50
-  
-  if (isBottom) {
-    console.log('Scroll hit bottom, loading more...')
-    loadMoreHistory()
-  }
-}
-
 const handleScrollToMessage = (msg: Message) => {
   emit('scroll-to-message', msg)
+}
+
+const searchUsers = async (query: string) => {
+  if (!query) {
+    searchUserResults.value = []
+    return
+  }
+  searchingUsers.value = true
+  try {
+    const response = await authApi.searchUsers(query)
+    if ((response as any).code === 0) {
+      // Filter out existing members
+      const allUsers = (response as any).data?.users || []
+      searchUserResults.value = allUsers.filter((u: any) => 
+        !members.value.some(m => m.user_id === u.id)
+      )
+    }
+  } catch (error) {
+    console.error('Failed to search users:', error)
+  } finally {
+    searchingUsers.value = false
+  }
 }
 
 const handleInviteMember = async () => {
   if (!props.group) return
   if (!inviteUserId.value) {
-    ElMessage.warning('请选择要邀请的用户')
+    ElMessage.warning('请输入用户ID')
     return
   }
   try {
-    // inviteUserId is now bound to the selected user's ID directly from el-select
-    const response = await groupApi.invite(props.group.id, { user_id: Number(inviteUserId.value) })
+    let targetUser = null
+    
+    if (inviteUserId.value) {
+       // Try to find in search results if not in recent search
+       targetUser = searchUserResults.value.find((u: any) => u.id === Number(inviteUserId.value))
+    }
+    
+    if (!targetUser) {
+      // One last try with direct search if ID provided
+      const searchRes = await authApi.searchUsers(inviteUserId.value)
+      const users = (searchRes as any).data?.users || []
+      targetUser = users.find((u: any) => u.id === Number(inviteUserId.value))
+    }
+
+    if (!targetUser) {
+      ElMessage.warning('用户不存在')
+      return
+    }
+
+    // 2. Invite user
+    const response = await groupApi.invite(props.group.id, { user_id: targetUser.id })
     if ((response as any).code === 0) {
       ElMessage.success('邀请成功')
       showInviteDialog.value = false
       inviteUserId.value = ''
-      searchResults.value = [] // Clear results
       await groupStore.loadMembers(props.group.id)
     } else {
       ElMessage.error((response as any).message || '邀请失败')
@@ -688,15 +636,10 @@ watch(() => props.group, async (newGroup) => {
     const response = await messageApi.getHistory({
       conversation_id: newGroup.id,
       conversation_type: 2,
-      limit: 15
+      limit: 50
     })
     if ((response as any).code === 0) {
-      const msgs = (response as any).data?.messages || []
-      // Fix: Sort initial messages Newest -> Oldest (Descending)
-      historyMessages.value = [...msgs].sort((a: Message, b: Message) => {
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      })
-      hasMore.value = msgs.length >= 15
+      historyMessages.value = (response as any).data?.messages?.reverse() || []
     }
   }
 }, { immediate: true })
@@ -711,6 +654,24 @@ watch(() => props.group, async (newGroup) => {
   display: flex;
   flex-direction: column;
   position: relative;
+  transition: width 0.3s ease;
+}
+
+@media screen and (max-width: 992px) {
+  .group-sidebar {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 100;
+    box-shadow: var(--shadow-lg);
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .group-sidebar {
+    width: 100%;
+  }
 }
 
 .sidebar-close {
@@ -733,8 +694,7 @@ watch(() => props.group, async (newGroup) => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden; /* Ensure tabs don't spill out */
-  min-height: 0; /* Critical for nested flex scrolling */
+  overflow: hidden;
 }
 
 .sidebar-tabs :deep(.el-tabs__nav-scroll) {
@@ -744,40 +704,36 @@ watch(() => props.group, async (newGroup) => {
 
 .sidebar-tabs :deep(.el-tabs__content) {
   flex: 1;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  min-height: 0; /* Critical for nested flex scrolling */
 }
 
 .sidebar-tabs :deep(.el-tab-pane) {
   height: 100%;
-  width: 100%;
   display: flex;
   flex-direction: column;
-  min-height: 0; /* Critical for nested flex scrolling */
+  overflow: hidden;
 }
 
 /* Group Info Section */
 .group-info-section {
-  padding: 20px 20px; /* Reduced padding */
+  padding: 24px;
   border-bottom: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
   background-color: var(--bg-surface);
-  gap: 16px; /* Reduced gap */
-  flex-shrink: 0; /* Prevent shrinking */
+  flex-shrink: 0;
 }
 
 .group-header {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px; /* Reduced gap */
-  margin-bottom: 0;
-  width: 100%;
+  gap: 16px;
+  margin-bottom: 24px;
 }
 
 .group-meta {
@@ -788,29 +744,24 @@ watch(() => props.group, async (newGroup) => {
 }
 
 .group-name {
-  font-size: 18px; /* Slightly smaller */
+  font-size: 18px;
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
-  line-height: 1.4;
 }
 
 .group-no {
   font-size: 13px;
   color: var(--text-secondary);
   margin: 0;
-  opacity: 0.8;
 }
 
 .group-stats {
   display: flex;
-  gap: 40px; /* Reduced gap */
+  gap: 32px;
+  margin-bottom: 24px;
   justify-content: center;
   width: 100%;
-  padding: 12px 0; /* Reduced padding */
-  border-top: 1px dashed var(--border-color);
-  border-bottom: 1px dashed var(--border-color);
-  margin-bottom: 0;
 }
 
 .stat-item {
@@ -828,15 +779,13 @@ watch(() => props.group, async (newGroup) => {
 .stat-value {
   font-size: 14px;
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .group-actions {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
-  justify-content: center;
-  width: 100%;
 }
 
 /* Members Section */
@@ -844,64 +793,61 @@ watch(() => props.group, async (newGroup) => {
   padding: 16px;
   display: flex;
   flex-direction: column;
-  flex: 1; /* Take remaining space */
-  overflow-y: auto;
-  min-height: 0;
+  flex: 1;
+  overflow: hidden;
 }
 
 .section-header {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: 16px;
+  margin-bottom: 12px;
   text-align: left;
   width: 100%;
-  padding-left: 4px;
+  flex-shrink: 0;
 }
 
 .members-search {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
   width: 100%;
+  flex-shrink: 0;
 }
 
 .members-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
   width: 100%;
+  flex: 1;
+  overflow-y: auto;
 }
 
 .member-item {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 16px;
-  padding: 12px;
-  border-radius: 12px;
+  gap: 12px;
+  padding: 8px;
+  border-radius: 8px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color 0.2s;
 }
 
 .member-item:hover {
   background-color: var(--bg-body);
-  transform: translateX(2px);
 }
 
 .member-info {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
 }
 
 .member-name {
-  font-size: 15px;
+  font-size: 14px;
   color: var(--text-primary);
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-weight: 500;
+  gap: 4px;
 }
 
 .member-id {
@@ -914,28 +860,43 @@ watch(() => props.group, async (newGroup) => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  overflow: hidden;
 }
 
-/* ... */
+.history-section.centered .msg-header {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  width: 100%;
+}
+
+.history-section.centered .msg-content {
+  text-align: center;
+}
+
+.history-search {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
 
 .history-list {
   flex: 1;
-  overflow-y: auto !important;
+  overflow-y: auto;
   padding: 8px;
-  min-height: 0;
-  /* height: 0;  Removed, relying on min-height: 0 and flex: 1 */
 }
 
 .history-message {
-  padding: 12px;
-  border-radius: 8px;
-  margin-bottom: 8px;
+  padding: 16px;
+  border-radius: 12px;
+  margin-bottom: 12px;
   cursor: pointer;
   transition: background-color 0.2s;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
 }
 
 .history-message:hover {
@@ -944,15 +905,27 @@ watch(() => props.group, async (newGroup) => {
 
 .msg-header {
   display: flex;
-  justify-content: center;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.sender-info {
+  display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 4px;
+}
+
+.role-tag {
+  height: 20px;
+  padding: 0 4px;
+  font-size: 10px;
+  border: none;
 }
 
 .msg-sender {
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-primary);
 }
 
@@ -963,14 +936,14 @@ watch(() => props.group, async (newGroup) => {
 }
 
 .msg-content {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
-  margin-top: 4px;
+  line-height: 1.5;
 }
 
 .empty-history {
@@ -980,43 +953,19 @@ watch(() => props.group, async (newGroup) => {
   font-size: 13px;
 }
 
-.loading-more,
-.no-more {
+.load-more {
   text-align: center;
-  padding: 16px;
-  color: var(--text-light);
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-
-.load-more-manual {
-  margin: 12px 24px 24px;
-  padding: 8px 16px;
-  background-color: var(--bg-body);
-  border: 1px solid var(--border-color);
-  border-radius: 20px;
-  cursor: pointer;
-  color: var(--text-secondary);
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  transition: all 0.2s ease;
-}
-
-.load-more-manual:hover {
+  padding: 12px;
   color: var(--primary-color);
-  border-color: var(--primary-color);
-  background-color: var(--bg-surface);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-  transform: translateY(-1px);
+  cursor: pointer;
+  font-size: 13px;
 }
 
-.load-more-manual:active {
-  transform: translateY(0);
+.load-more:hover {
+  text-decoration: underline;
+}
+.user-option {
+  display: flex;
+  align-items: center;
 }
 </style>

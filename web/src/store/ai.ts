@@ -94,7 +94,7 @@ export const useAIStore = defineStore('ai', () => {
         const updatedMsgs = [...(messages.value[botId] || []), aiMsg]
         messages.value = { ...messages.value, [botId]: updatedMsgs }
         saveMessagesToStorage()
-        
+
         return (response as any).data.reply
       }
       return null
