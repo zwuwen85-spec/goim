@@ -8,10 +8,10 @@
           {{ title?.[0] || '?' }}
           <el-icon v-if="!title && !avatar"><UserFilled /></el-icon>
         </el-avatar>
-      </div>
-      <div class="header-center">
-        <div class="header-title">{{ title }}</div>
-        <div class="header-subtitle" v-if="subtitle">{{ subtitle }}</div>
+        <div class="header-info">
+          <div class="header-title">{{ title }}</div>
+          <div class="header-subtitle" v-if="subtitle">{{ subtitle }}</div>
+        </div>
       </div>
       <div class="header-actions">
         <slot name="actions"></slot>
@@ -19,7 +19,7 @@
     </div>
 
     <!-- Messages -->
-    <div class="messages-container" ref="messagesRef">
+    <div class="messages-container" ref="messagesRef" @scroll="handleScroll">
       <div v-if="loading" class="loading-state">
         <el-skeleton :rows="3" animated />
       </div>
@@ -120,10 +120,18 @@ const props = defineProps<{
   getSenderStyle?: (msg: any) => any
 }>()
 
-const emit = defineEmits(['send'])
+const emit = defineEmits(['send', 'load-more'])
 
 const inputValue = ref('')
 const messagesRef = ref<HTMLElement>()
+const firstMsgId = ref<string | number | null>(null)
+
+const handleScroll = () => {
+  if (!messagesRef.value || props.loading) return
+  if (messagesRef.value.scrollTop < 20 && props.messages.length > 0) {
+    emit('load-more')
+  }
+}
 
 const isMe = (msg: any) => {
   return msg.from_user_id === props.currentUserId || msg.role === 'user'
@@ -167,37 +175,55 @@ const scrollToBottom = () => {
   })
 }
 
-const scrollToMessage = (messageId: number | string) => {
+const scrollToMessage = (messageId: string | number) => {
   nextTick(() => {
-    const elementId = `msg-${messageId}`
-    const element = document.getElementById(elementId)
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      element.classList.add('highlight-message')
-      setTimeout(() => {
-        element.classList.remove('highlight-message')
-      }, 2000)
+    const el = document.getElementById('msg-' + messageId)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
   })
 }
+
+watch(() => props.messages, async (newMsgs) => {
+  if (!messagesRef.value) return
+  
+  const el = messagesRef.value
+  const oldHeight = el.scrollHeight
+  const oldTop = el.scrollTop
+  // Check if was at bottom (allow some slack)
+  const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50
+  
+  const newFirstId = newMsgs.length > 0 ? (newMsgs[0].msg_id || newMsgs[0].id) : null
+  const isPrepend = firstMsgId.value !== null && newFirstId !== null && newFirstId !== firstMsgId.value
+  
+  firstMsgId.value = newFirstId
+  
+  await nextTick()
+  
+  if (wasAtBottom) {
+    el.scrollTop = el.scrollHeight
+  } else if (isPrepend && oldTop < 50) {
+    // If we were at top (loading history), maintain relative position
+    el.scrollTop = el.scrollHeight - oldHeight + oldTop
+  }
+}, { deep: true })
+
+onMounted(() => {
+  scrollToBottom()
+  if (props.messages.length > 0) {
+    firstMsgId.value = props.messages[0].msg_id || props.messages[0].id
+  }
+})
 
 defineExpose({
   scrollToBottom,
   scrollToMessage
 })
 
-watch(() => props.messages, () => {
-  scrollToBottom()
-}, { deep: true })
-
-onMounted(() => {
-  scrollToBottom()
-})
-
 // Default helpers if not provided
 const defaultGetSenderName = (msg: any) => msg.senderName || 'User'
 const defaultGetSenderAvatar = (msg: any) => msg.senderAvatar || ''
-const defaultGetSenderStyle = (msg: any) => ({})
+const defaultGetSenderStyle = (_msg: any) => ({})
 
 const getSenderName = props.getSenderName || defaultGetSenderName
 const getSenderAvatar = props.getSenderAvatar || defaultGetSenderAvatar
@@ -222,7 +248,6 @@ const getSenderStyle = props.getSenderStyle || defaultGetSenderStyle
   justify-content: space-between;
   background: rgba(255, 255, 255, 0.8);
   backdrop-filter: blur(10px);
-  position: relative;
 }
 
 .header-left {
@@ -231,14 +256,9 @@ const getSenderStyle = props.getSenderStyle || defaultGetSenderStyle
   gap: 12px;
 }
 
-.header-center {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+.header-info {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  text-align: center;
 }
 
 .header-title {
@@ -395,19 +415,5 @@ const getSenderStyle = props.getSenderStyle || defaultGetSenderStyle
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.highlight-message .message-bubble {
-  animation: highlight 2s ease-out;
-}
-
-@keyframes highlight {
-  0%, 20% {
-    background-color: var(--primary-light);
-    transform: scale(1.02);
-  }
-  100% {
-    transform: scale(1);
-  }
 }
 </style>

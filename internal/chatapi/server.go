@@ -12,7 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/Terry-Mao/goim/internal/ai"
 	iconf "github.com/Terry-Mao/goim/internal/ai/conf"
 	"github.com/Terry-Mao/goim/internal/chatapi/conf"
@@ -21,6 +20,7 @@ import (
 	"github.com/Terry-Mao/goim/internal/chatapi/middleware"
 	"github.com/Terry-Mao/goim/internal/chatapi/model"
 	"github.com/Terry-Mao/goim/internal/chatapi/service"
+	"github.com/gin-gonic/gin"
 	log "github.com/golang/glog"
 )
 
@@ -164,6 +164,7 @@ func (s *Server) setupRoutes() {
 				friend.POST("/request", handler.Wrap(s.handleFriendRequest))
 				friend.POST("/accept/:id", handler.Wrap(s.handleAcceptFriend))
 				friend.POST("/reject/:id", handler.Wrap(s.handleRejectFriend))
+				friend.PUT("/remark", handler.Wrap(s.handleUpdateFriendRemark))
 				friend.DELETE("/delete/:id", handler.Wrap(s.handleDeleteFriend))
 				friend.GET("/list", handler.Wrap(s.handleGetFriends))
 				friend.GET("/requests", handler.Wrap(s.handleGetFriendRequests))
@@ -396,11 +397,11 @@ func (s *Server) handleGetProfile(c *gin.Context) (interface{}, error) {
 	user.PasswordHash = ""
 
 	return gin.H{
-		"user_id":  user.ID,
-		"username": user.Username,
-		"nickname": user.Nickname,
-		"avatar":   user.AvatarURL.String,
-		"status":   user.Status,
+		"user_id":   user.ID,
+		"username":  user.Username,
+		"nickname":  user.Nickname,
+		"avatar":    user.AvatarURL.String,
+		"status":    user.Status,
 		"signature": user.Signature.String,
 	}, nil
 }
@@ -429,7 +430,7 @@ func (s *Server) handleSearchUsers(c *gin.Context) (interface{}, error) {
 // FriendRequestRequest represents a friend request
 type FriendRequestRequest struct {
 	ToUserID int64  `json:"to_user_id" binding:"required"`
-	Message string `json:"message"`
+	Message  string `json:"message"`
 }
 
 func (s *Server) handleFriendRequest(c *gin.Context) (interface{}, error) {
@@ -562,6 +563,36 @@ func (s *Server) handleRejectFriend(c *gin.Context) (interface{}, error) {
 	return gin.H{"message": "friend request rejected"}, nil
 }
 
+func (s *Server) handleUpdateFriendRemark(c *gin.Context) (interface{}, error) {
+	var req struct {
+		FriendID  int64  `json:"friend_id" binding:"required"`
+		Remark    string `json:"remark"`
+		GroupName string `json:"group_name"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return nil, fmt.Errorf("invalid request: %w", err)
+	}
+
+	userID := middleware.GetUserIDFromGin(c)
+	ctx := c.Request.Context()
+
+	// Check if friendship exists
+	existing, err := s.friendDAO.FindFriendship(ctx, userID, req.FriendID)
+	if err != nil || existing == nil {
+		return nil, fmt.Errorf("friendship not found")
+	}
+
+	// Update friendship
+	existing.Remark = sql.NullString{String: req.Remark, Valid: req.Remark != ""}
+	existing.GroupName = req.GroupName
+
+	if err := s.friendDAO.UpdateFriendship(ctx, existing); err != nil {
+		return nil, fmt.Errorf("failed to update friendship: %w", err)
+	}
+
+	return gin.H{"message": "friend remark updated"}, nil
+}
+
 func (s *Server) handleDeleteFriend(c *gin.Context) (interface{}, error) {
 	friendID := c.Param("id")
 	var fID int64
@@ -659,10 +690,10 @@ func (s *Server) handleCreateGroup(c *gin.Context) (interface{}, error) {
 	s.messageDAO.CreateMessage(ctx, welcomeMsg)
 
 	return gin.H{
-		"group_id":   group.ID,
-		"group_no":   group.GroupNo,
-		"name":       group.Name,
-		"owner_id":   group.OwnerID,
+		"group_id":    group.ID,
+		"group_no":    group.GroupNo,
+		"name":        group.Name,
+		"owner_id":    group.OwnerID,
 		"max_members": req.MaxMembers,
 	}, nil
 }
@@ -752,16 +783,16 @@ func (s *Server) handleGetGroupInfo(c *gin.Context) (interface{}, error) {
 	}
 
 	return gin.H{
-		"id":          group.ID,
-		"group_no":    group.GroupNo,
-		"name":        group.Name,
-		"avatar":      group.AvatarURL.String,
-		"owner_id":    group.OwnerID,
-		"max_members": group.MaxMembers,
-		"join_type":   group.JoinType,
-		"mute_all":    group.MuteAll,
+		"id":           group.ID,
+		"group_no":     group.GroupNo,
+		"name":         group.Name,
+		"avatar":       group.AvatarURL.String,
+		"owner_id":     group.OwnerID,
+		"max_members":  group.MaxMembers,
+		"join_type":    group.JoinType,
+		"mute_all":     group.MuteAll,
 		"member_count": len(members),
-		"members":     members,
+		"members":      members,
 	}, nil
 }
 
@@ -819,9 +850,9 @@ func (s *Server) handleUpdateGroup(c *gin.Context) (interface{}, error) {
 	}
 
 	return gin.H{
-		"group_id":   group.ID,
-		"group_no":   group.GroupNo,
-		"name":       group.Name,
+		"group_id":    group.ID,
+		"group_no":    group.GroupNo,
+		"name":        group.Name,
 		"max_members": group.MaxMembers,
 	}, nil
 }
@@ -869,8 +900,8 @@ func (s *Server) handleInviteMember(c *gin.Context) (interface{}, error) {
 	}
 
 	var req struct {
-		UserID int64  `json:"user_id" binding:"required"`
-		Role   int8   `json:"role"`   // Optional: 1=member, 2=admin
+		UserID int64 `json:"user_id" binding:"required"`
+		Role   int8  `json:"role"` // Optional: 1=member, 2=admin
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		return nil, fmt.Errorf("invalid request: %w", err)
@@ -1373,9 +1404,9 @@ func (s *Server) handleGetHistory(c *gin.Context) (interface{}, error) {
 	}
 
 	return gin.H{
-		"messages":  messages,
-		"has_more":  len(messages) == int(limit),
-		"user_id":   userID,
+		"messages": messages,
+		"has_more": len(messages) == int(limit),
+		"user_id":  userID,
 	}, nil
 }
 
@@ -1383,7 +1414,7 @@ func (s *Server) handleGetHistory(c *gin.Context) (interface{}, error) {
 type MarkReadRequest struct {
 	ConversationID   int64 `json:"conversation_id" binding:"required"`
 	ConversationType int8  `json:"conversation_type" binding:"required"`
-	MsgID           int64 `json:"msg_id" binding:"required"`
+	MsgID            int64 `json:"msg_id" binding:"required"`
 }
 
 func (s *Server) handleMarkRead(c *gin.Context) (interface{}, error) {
@@ -1460,11 +1491,11 @@ func (s *Server) handleGetAIBots(c *gin.Context) (interface{}, error) {
 	} else {
 		for _, bot := range userBots {
 			bots = append(bots, gin.H{
-				"id":         bot.BotID,
-				"name":       bot.Name,
+				"id":          bot.BotID,
+				"name":        bot.Name,
 				"personality": bot.Personality,
-				"is_default": false,
-				"model":      bot.ModelName,
+				"is_default":  false,
+				"model":       bot.ModelName,
 			})
 		}
 	}
@@ -1516,11 +1547,11 @@ func (s *Server) handleGetAIBot(c *gin.Context) (interface{}, error) {
 	}
 
 	return gin.H{
-		"id":         bot.BotID,
-		"name":       bot.Name,
+		"id":          bot.BotID,
+		"name":        bot.Name,
 		"personality": bot.Personality,
-		"model":      bot.ModelName,
-		"is_default": false,
+		"model":       bot.ModelName,
+		"is_default":  false,
 	}, nil
 }
 
@@ -1742,9 +1773,9 @@ func (s *Server) handleSendAIMessage(c *gin.Context) (interface{}, error) {
 	}
 
 	return gin.H{
-		"reply":      response,
-		"bot_id":     req.BotID,
+		"reply":       response,
+		"bot_id":      req.BotID,
 		"user_msg_id": userMsg.MsgID,
-		"ai_msg_id":  aiMsg.MsgID,
+		"ai_msg_id":   aiMsg.MsgID,
 	}, nil
 }

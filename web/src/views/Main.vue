@@ -21,7 +21,9 @@
           @click="activeTab = 'friends'"
           title="好友"
         >
-          <el-icon :size="24"><User /></el-icon>
+          <el-badge :value="chatStore.friendRequests.length" :hidden="chatStore.friendRequests.length === 0" class="sidebar-badge">
+            <el-icon :size="24"><User /></el-icon>
+          </el-badge>
         </div>
         <div 
           class="nav-item" 
@@ -75,10 +77,10 @@
       
       <!-- Content Lists -->
       <div class="sidebar-content">
-        <template v-if="activeTab === 'chats'">
-           <ConversationList @select="handleConversationSelect" />
-        </template>
-        
+        <ConversationList 
+          v-if="activeTab === 'chats'" 
+          @select="handleConversationSelect" 
+        />
         <FriendManager 
           v-else-if="activeTab === 'friends'" 
           @chat="handleFriendChat" 
@@ -100,7 +102,7 @@
         <div class="chat-container">
           <ChatWindow
             ref="chatWindowRef"
-            :key="chatWindowKey"
+            :key="activeSessionType + '-' + (chatStore.currentSession?.id || aiStore.currentBot?.id || '0')"
             :messages="currentMessages"
             :current-user-id="userStore.currentUser?.id || 0"
             :title="sessionTitle"
@@ -114,6 +116,7 @@
             :get-sender-avatar="getSenderAvatar"
             :get-sender-style="getSenderStyle"
             @send="handleSendMessage"
+            @load-more="handleLoadMore"
           >
             <template #actions>
               <div class="header-actions-wrapper">
@@ -165,9 +168,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
 import { 
   ChatLineRound, User, Connection, Cpu, 
   SwitchButton, ChatDotRound, MoreFilled, Delete 
@@ -200,13 +203,6 @@ const activeSessionType = ref<'private' | 'group' | 'ai' | null>(null)
 const showGroupSidebar = ref(false)
 const chatWindowRef = ref<InstanceType<typeof ChatWindow>>()
 
-const chatWindowKey = computed(() => {
-  if (activeSessionType.value === 'ai') {
-    return `ai-${aiStore.currentBot?.id}`
-  }
-  return `${activeSessionType.value}-${chatStore.currentSession?.id}`
-})
-
 // WebSocket
 const { messages: wsMessages, connect, disconnect } = useWebSocket('ws://localhost:3102/sub')
 
@@ -217,6 +213,21 @@ const currentMessages = computed(() => {
   }
   return chatStore.currentSession?.messages || []
 })
+
+// Polling for friend requests
+let pollInterval: ReturnType<typeof setInterval>
+
+const startPolling = () => {
+  pollInterval = setInterval(() => {
+    chatStore.loadFriendRequests()
+  }, 10000) // 10 seconds
+}
+
+const stopPolling = () => {
+  if (pollInterval) {
+    clearInterval(pollInterval)
+  }
+}
 
 const sessionTitle = computed(() => {
   if (activeSessionType.value === 'ai') return aiStore.currentBot?.name || 'AI'
@@ -254,10 +265,7 @@ const isSending = computed(() => {
   return activeSessionType.value === 'ai' ? aiStore.sending : false
 })
 
-const isLoadingMessages = computed(() => {
-  // Can add loading state logic here
-  return false
-})
+const isLoadingMessages = ref(false)
 
 // Handlers
 const handleConversationSelect = async (conv: any) => {
@@ -269,24 +277,7 @@ const handleConversationSelect = async (conv: any) => {
 
   await nextTick()
 
-  // Handle AI conversation
-  if (conv.conversation_type === 'ai') {
-    activeSessionType.value = 'ai'
-    // Set chatStore session to null to avoid conflict
-    chatStore.currentSession = null
-    
-    // Find bot and set it
-    const bot = aiStore.getBotById(conv.target_id) || aiStore.defaultBots.find(b => b.id === conv.target_id)
-    if (bot) {
-      aiStore.setCurrentBot(bot)
-    }
-    return
-  }
-
   activeSessionType.value = conv.conversation_type === 2 ? 'group' : 'private'
-  // Clear AI bot
-  aiStore.currentBot = null
-  
   const name = parseSqlNullString(conv.target_user?.nickname)
   const avatar = parseSqlNullString(conv.target_user?.avatar)
   await chatStore.openChat(conv.target_id, conv.conversation_type, name, avatar)
@@ -301,25 +292,24 @@ const handleConversationSelect = async (conv: any) => {
 }
 
 const handleFriendChat = (friend: any) => {
-  console.log('handleFriendChat', friend)
-  
-  // 1. Prepare data
-  const userId = friend.friend_user?.id || friend.friend_id
-  const nickname = friend.remark || friend.friend_user?.nickname || `User ${userId}`
-  const avatar = friend.friend_user?.avatar || ''
+  console.log('handleFriendChat')
 
-  // 2. Switch UI immediately for best responsiveness
+  // Close sidebar first
   showGroupSidebar.value = false
-  activeTab.value = 'chats'
-  activeSessionType.value = 'private'
+  console.log('set showGroupSidebar to false')
 
-  // 3. Trigger store action (fire and forget / reactive update)
-  chatStore.openChat(userId, 1, nickname, avatar).then(() => {
-    console.log('Chat session opened successfully')
-  }).catch(e => {
-    console.error('Failed to open chat session', e)
-    ElMessage.error('无法打开聊天窗口')
-  })
+  const userId = friend.friend_user?.id || friend.friend_id
+  
+  // Clear AI state if switching from AI
+  if (activeSessionType.value === 'ai') {
+     aiStore.setCurrentBot(null)
+  }
+
+  activeSessionType.value = 'private'
+  chatStore.openChat(userId, 1, friend.remark || friend.friend_user?.nickname)
+  activeTab.value = 'chats' // Switch to chat tab
+
+  console.log('after handleFriendChat, activeSessionType:', activeSessionType.value, 'showGroupSidebar:', showGroupSidebar.value)
 }
 
 const handleGroupSelect = async (group: any) => {
@@ -335,28 +325,19 @@ const handleGroupSelect = async (group: any) => {
   await groupStore.setCurrentGroup(group)
   chatStore.openChat(group.id, 2, group.name)
   await loadGroupMembers(group.id)
-  activeTab.value = 'chats' // Switch to chat tab
+  // activeTab.value = 'chats' // Optional: stay on groups or switch? Switching is better for "Chat" context
 
   console.log('after handleGroupSelect, activeSessionType:', activeSessionType.value, 'showGroupSidebar:', showGroupSidebar.value)
 }
 
 const handleBotSelect = (bot: any) => {
-  console.log('handleBotSelect', bot)
+  console.log('handleBotSelect')
 
-  // 1. Prepare UI state
-  showGroupSidebar.value = false
   activeSessionType.value = 'ai'
-  
-  // 2. Set current bot in store
+  showGroupSidebar.value = false
   aiStore.setCurrentBot(bot)
-  
-  // 3. Switch to chats tab
-  activeTab.value = 'chats'
-  
-  // Clear chat session to avoid highlighting wrong item
-  chatStore.currentSession = null
-  
-  console.log('handleBotSelect completed')
+
+  console.log('after handleBotSelect, activeSessionType:', activeSessionType.value, 'showGroupSidebar:', showGroupSidebar.value)
 }
 
 const toggleGroupSidebar = () => {
@@ -372,6 +353,25 @@ const handleSendMessage = async (content: string) => {
     // Private or Group
     const type = activeSessionType.value === 'group' ? 2 : 1
     await chatStore.sendMessage(JSON.stringify({ text: content }), type)
+  }
+}
+
+const handleLoadMore = async () => {
+  if (isLoadingMessages.value) return
+  
+  if (activeSessionType.value === 'ai') {
+    // AI history loading not implemented yet
+    return
+  }
+  
+  isLoadingMessages.value = true
+  try {
+    const count = await chatStore.loadMoreMessages()
+    if (count === 0) {
+      // No more messages, maybe show a toast or just stop trying?
+    }
+  } finally {
+    isLoadingMessages.value = false
   }
 }
 
@@ -460,14 +460,21 @@ onMounted(async () => {
   
   await Promise.all([
     chatStore.loadConversations(),
-    chatStore.loadFriends()
+    chatStore.loadFriends(),
+    chatStore.loadFriendRequests()
   ])
   
+  startPolling()
+
   try {
     connect(userStore.token, userStore.currentUser!.id)
   } catch (e) {
     console.warn('WS failed', e)
   }
+})
+
+onUnmounted(() => {
+  stopPolling()
 })
 
 // Watch activeSessionType to close sidebar when switching away from group
@@ -565,6 +572,12 @@ watch(() => chatStore.currentSession?.id, () => {
   background-color: var(--primary-color);
   color: white;
   box-shadow: var(--shadow-md);
+}
+
+.sidebar-badge :deep(.el-badge__content) {
+  top: 0;
+  right: 0;
+  transform: translateY(-50%) translateX(50%);
 }
 
 .bottom-actions {

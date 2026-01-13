@@ -1,4 +1,4 @@
-import { ref, reactive } from 'vue'
+import { ref } from 'vue'
 import { encodeMessage, decodeMessage, OP_HEARTBEAT, OP_AUTH, getOpName, PROTOCOL_VERSION } from './protocol'
 
 export type WebSocketStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
@@ -22,10 +22,9 @@ export function useWebSocket(wsUrl: string) {
   let seq = 1
   let heartbeatInterval: number | null = null
   let reconnectTimeout: number | null = null
-  const messageHandlers: Map<number, (msg: any) => void> = new Map()
 
   // Send auth message
-  const sendAuth = (token: string, userId: number) => {
+  const sendAuth = (_token: string, userId: number) => {
     if (!ws.value || ws.value.readyState !== WebSocket.OPEN) return
 
     const authData = JSON.stringify({
@@ -101,7 +100,7 @@ export function useWebSocket(wsUrl: string) {
         status.value = 'disconnected'
         stopHeartbeat()
         // Only auto reconnect in production, not in development
-        if (import.meta.env.PROD) {
+        if ((import.meta as any).env.PROD) {
           reconnectTimeout = window.setTimeout(() => connect(token, userId), 5000)
         }
       }

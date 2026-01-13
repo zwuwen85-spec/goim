@@ -58,12 +58,12 @@
       <el-tab-pane name="requests">
         <template #label>
           <span>好友请求</span>
-          <el-badge v-if="pendingRequests.length > 0" :value="pendingRequests.length" class="request-badge" />
+          <el-badge v-if="chatStore.friendRequests.length > 0" :value="chatStore.friendRequests.length" class="request-badge" />
         </template>
         <div class="requests-content">
           <div class="request-items">
             <div
-              v-for="request in pendingRequests"
+              v-for="request in chatStore.friendRequests"
               :key="request.id"
               class="request-item"
             >
@@ -87,7 +87,7 @@
               </div>
             </div>
 
-            <el-empty v-if="pendingRequests.length === 0" description="暂无好友请求" />
+            <el-empty v-if="chatStore.friendRequests.length === 0" description="暂无好友请求" />
           </div>
         </div>
       </el-tab-pane>
@@ -100,11 +100,10 @@
               <el-input
                 v-model="searchForm.keyword"
                 placeholder="输入用户名或昵称"
-                @keyup.enter="searchUsers"
+                @input="handleSearchInput"
+                :prefix-icon="Search"
+                clearable
               >
-                <template #append>
-                  <el-button :icon="Search" @click="searchUsers" />
-                </template>
               </el-input>
             </el-form-item>
           </el-form>
@@ -191,18 +190,18 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { friendApi, authApi } from '../api/chat'
 import { useChatStore } from '../store/chat'
+import { useUserStore } from '../store/user'
 import type { Friend, FriendRequest, User } from '../api/chat'
 import { parseSqlNullString } from '../utils/format'
 
 const chatStore = useChatStore()
-const emit = defineEmits(['chat'])
+const userStore = useUserStore()
 
 const subTab = ref('list')
 const searchKeyword = ref('')
 const searchForm = ref({ keyword: '' })
 const searchResults = ref<User[]>([])
 const hasSearched = ref(false)
-const pendingRequests = ref<FriendRequest[]>([])
 
 const showRemarkDialog = ref(false)
 const remarkForm = ref({ remark: '', groupName: '' })
@@ -245,13 +244,17 @@ const handleSearch = () => {
 }
 
 const startChat = (friend: Friend) => {
-    emit('chat', friend)
-  }
+  const userId = friend.friend_user?.id || friend.friend_id
+  // Emit 'chat' event to parent (Main.vue) to handle view switching
+  emit('chat', friend)
+}
+
+const emit = defineEmits(['chat'])
 
 const handleFriendCommand = async (command: string, friend: Friend) => {
   switch (command) {
     case 'chat':
-      emit('chat', friend)
+      startChat(friend)
       break
     case 'remark':
       currentFriend.value = friend
@@ -271,10 +274,17 @@ const handleSaveRemark = async () => {
   if (!currentFriend.value) return
 
   try {
-    // TODO: Call API to update friend remark
-    ElMessage.success('备注已更新')
-    showRemarkDialog.value = false
-    await chatStore.loadFriends()
+    const response = await friendApi.updateRemark({
+      friend_id: currentFriend.value.friend_id,
+      remark: remarkForm.value.remark,
+      group_name: remarkForm.value.groupName
+    })
+
+    if ((response as any).code === 0) {
+      ElMessage.success('备注已更新')
+      showRemarkDialog.value = false
+      await chatStore.loadFriends()
+    }
   } catch (error: any) {
     ElMessage.error(error.message || '更新失败')
   }
@@ -292,7 +302,7 @@ const handleDeleteFriend = async (friend: Friend) => {
       }
     )
 
-    const response = await friendApi.deleteFriend(friend.id)
+    const response = await friendApi.deleteFriend(friend.friend_id)
     if ((response as any).code === 0) {
       ElMessage.success('已删除好友')
       await chatStore.loadFriends()
@@ -303,6 +313,22 @@ const handleDeleteFriend = async (friend: Friend) => {
     }
   }
 }
+
+const handleSearchInput = async () => {
+  if (!searchForm.value.keyword.trim()) {
+    searchResults.value = []
+    hasSearched.value = false
+    return
+  }
+  
+  // Debounce search
+  if (searchTimeout) clearTimeout(searchTimeout)
+  searchTimeout = setTimeout(() => {
+    searchUsers()
+  }, 300)
+}
+
+let searchTimeout: ReturnType<typeof setTimeout>
 
 const searchUsers = async () => {
   if (!searchForm.value.keyword.trim()) return
@@ -327,6 +353,12 @@ const showSendRequestDialog = (user: User) => {
 const handleSendRequest = async () => {
   if (!targetUser.value) return
 
+  // Prevent adding self
+  if (targetUser.value.id === userStore.currentUser?.id) {
+    ElMessage.warning('不能添加自己为好友')
+    return
+  }
+
   try {
     const response = await friendApi.sendRequest({
       to_user_id: targetUser.value.id,
@@ -337,9 +369,18 @@ const handleSendRequest = async () => {
       ElMessage.success('好友请求已发送')
       showRequestDialog.value = false
       searchResults.value = []
+      searchForm.value.keyword = ''
+      subTab.value = 'list' // Switch back to list tab
+    } else {
+      // Handle business error (e.g. already friends, request pending)
+      ElMessage.error((response as any).message || '发送失败')
+      // Stay on the add friend tab but close dialog to allow retry/search others
+      showRequestDialog.value = false
     }
   } catch (error: any) {
+    // Handle network or other errors
     ElMessage.error(error.message || '发送失败')
+    showRequestDialog.value = false
   }
 }
 
@@ -350,7 +391,7 @@ const handleRequest = async (requestId: number, action: 'accept' | 'reject') => 
 
     if ((response as any).code === 0) {
       ElMessage.success(action === 'accept' ? '已接受好友请求' : '已拒绝好友请求')
-      await loadFriendRequests()
+      await chatStore.loadFriendRequests()
       if (action === 'accept') {
         await chatStore.loadFriends()
       }
@@ -360,20 +401,9 @@ const handleRequest = async (requestId: number, action: 'accept' | 'reject') => 
   }
 }
 
-const loadFriendRequests = async () => {
-  try {
-    const response = await friendApi.getRequests()
-    if ((response as any).code === 0) {
-      pendingRequests.value = ((response as any).data.requests || []).filter((r: FriendRequest) => r.status === 0)
-    }
-  } catch (error: any) {
-    console.error('Failed to load friend requests:', error)
-  }
-}
-
 onMounted(async () => {
   await chatStore.loadFriends()
-  await loadFriendRequests()
+  await chatStore.loadFriendRequests()
 })
 </script>
 
