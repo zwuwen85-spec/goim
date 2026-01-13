@@ -42,7 +42,9 @@ export const useGroupStore = defineStore('group', () => {
           owner_id: (response as any).data.owner_id,
           max_members: (response as any).data.max_members,
           join_type: 1,
-          mute_all: 0
+          mute_all: 0,
+          member_count: 1,
+          created_at: new Date().toISOString()
         }
         groups.value.push(newGroup)
         return newGroup

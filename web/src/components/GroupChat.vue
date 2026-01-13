@@ -201,8 +201,8 @@ const getGroupColor = (groupId: number) => {
 
 const getMemberStyle = (userId: number) => {
   const member = groupStore.members.find(m => m.user_id === userId)
-  if (member?.role === 'owner') return { backgroundColor: '#F56C6C' }
-  if (member?.role === 'admin') return { backgroundColor: '#E6A23C' }
+  if (member?.role === 3) return { backgroundColor: '#F56C6C' }
+  if (member?.role === 2) return { backgroundColor: '#E6A23C' }
   return {}
 }
 
@@ -216,11 +216,11 @@ const getMemberName = (msg: any) => {
   return member?.user?.nickname || member?.nickname || `User ${msg.from_user_id}`
 }
 
-const getRoleText = (role: string) => {
-  const roles: Record<string, string> = {
-    owner: '群主',
-    admin: '管理员',
-    member: '成员'
+const getRoleText = (role: number) => {
+  const roles: Record<number, string> = {
+    3: '群主',
+    2: '管理员',
+    1: '成员'
   }
   return roles[role] || '成员'
 }

@@ -7,6 +7,12 @@ const api = axios.create({
   }
 })
 
+export interface ApiResponse<T = any> {
+  code: number
+  message: string
+  data: T
+}
+
 // Request interceptor to add auth token
 api.interceptors.request.use(
   (config) => {
@@ -42,8 +48,7 @@ export interface User {
   username: string
   nickname: string
   avatar?: string
-  status?: number
-  created_at?: string
+  status: number
 }
 
 export interface Message {
@@ -94,12 +99,15 @@ export interface FriendRequest {
 // Group Types
 export interface Group {
   id: number
+  group_no?: string
   name: string
   owner_id: number
   max_members: number
   member_count: number
   avatar?: string
   description?: string
+  join_type?: number
+  mute_all?: number
   created_at: string
 }
 
@@ -163,6 +171,9 @@ export const friendApi = {
   acceptRequest: (id: number) => api.post(`/friend/accept/${id}`),
 
   rejectRequest: (id: number) => api.post(`/friend/reject/${id}`),
+
+  updateRemark: (data: { friend_id: number; remark: string; group_name: string }) =>
+    api.put('/friend/remark', data),
 
   deleteFriend: (id: number) => api.delete(`/friend/delete/${id}`),
 

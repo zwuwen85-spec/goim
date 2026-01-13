@@ -5,16 +5,16 @@ import { aiApi, type AIBot, type AIMessage } from '../api/chat'
 export const useAIStore = defineStore('ai', () => {
   const bots = ref<AIBot[]>([])
   const currentBot = ref<AIBot | null>(null)
-  const messages = ref<Record<number, AIMessage[]>>({})
+  const messages = ref<Map<number, AIMessage[]>>(new Map())
   const loading = ref(false)
   const sending = ref(false)
 
   // Load available AI bots
   const loadBots = async () => {
     try {
-      const response = await aiApi.getBots()
-      if ((response as any).code === 0) {
-        bots.value = (response as any).data.bots || []
+      const response = await aiApi.getBots() as any
+      if (response.code === 0) {
+        bots.value = response.data.bots || []
       }
     } catch (error: any) {
       console.error('Failed to load AI bots:', error)
@@ -24,14 +24,14 @@ export const useAIStore = defineStore('ai', () => {
 
   // Get messages for a bot
   const getBotMessages = (botId: number): AIMessage[] => {
-    return messages.value[botId] || []
+    return messages.value.get(botId) || []
   }
 
   // Set current bot
-  const setCurrentBot = (bot: AIBot) => {
+  const setCurrentBot = (bot: AIBot | null) => {
     currentBot.value = bot
-    if (!messages.value[bot.id]) {
-      messages.value[bot.id] = []
+    if (bot && !messages.value.has(bot.id)) {
+      messages.value.set(bot.id, [])
     }
   }
 
@@ -48,35 +48,25 @@ export const useAIStore = defineStore('ai', () => {
       timestamp: Date.now()
     }
 
-    if (!messages.value[botId]) {
-      messages.value[botId] = []
-    }
-    
-    // Trigger reactivity by reassigning array or using reactive object
-    // For simple ref object, pushing to array inside might not trigger deep watch if not deep
-    // But store refs are usually reactive. 
-    // Let's create a new array to be sure
-    const newMsgs = [...(messages.value[botId] || []), userMsg]
-    messages.value = { ...messages.value, [botId]: newMsgs }
+    const botMessages = messages.value.get(botId) || []
+    botMessages.push(userMsg)
+    messages.value.set(botId, botMessages)
 
     try {
       const response = await aiApi.sendMessage({
         bot_id: botId,
         message: userMessage
-      })
+      }) as any
 
-      if ((response as any).code === 0) {
+      if (response.code === 0) {
         // Add AI response
         const aiMsg: AIMessage = {
           role: 'assistant',
-          content: (response as any).data.reply,
+          content: response.data.reply,
           timestamp: Date.now()
         }
-        
-        const updatedMsgs = [...(messages.value[botId] || []), aiMsg]
-        messages.value = { ...messages.value, [botId]: updatedMsgs }
-        
-        return (response as any).data.reply
+        botMessages.push(aiMsg)
+        return response.data.reply
       }
       return null
     } catch (error: any) {
@@ -89,14 +79,12 @@ export const useAIStore = defineStore('ai', () => {
 
   // Clear messages for a bot
   const clearMessages = (botId: number) => {
-    const newMessages = { ...messages.value }
-    delete newMessages[botId]
-    messages.value = newMessages
+    messages.value.delete(botId)
   }
 
   // Clear all messages
   const clearAllMessages = () => {
-    messages.value = {}
+    messages.value.clear()
   }
 
   // Get default bots (system bots)

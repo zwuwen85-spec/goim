@@ -30,7 +30,7 @@ export const useUserStore = defineStore('user', () => {
   }
 
   const login = async (username: string, password: string) => {
-    const response = await authApi.login({ username, password })
+    const response = await authApi.login({ username, password }) as any
     if (response.code === 0) {
       setToken(response.data.token)
       const user: User = {
@@ -47,7 +47,7 @@ export const useUserStore = defineStore('user', () => {
   }
 
   const register = async (username: string, password: string, nickname: string) => {
-    const response = await authApi.register({ username, password, nickname })
+    const response = await authApi.register({ username, password, nickname }) as any
     if (response.code === 0) {
       setToken(response.data.token)
       const user: User = {
@@ -70,7 +70,7 @@ export const useUserStore = defineStore('user', () => {
   }
 
   const refreshProfile = async () => {
-    const response = await authApi.getProfile()
+    const response = await authApi.getProfile() as any
     if (response.code === 0) {
       const user: User = {
         id: response.data.user_id,
