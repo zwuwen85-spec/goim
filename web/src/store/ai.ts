@@ -5,16 +5,16 @@ import { aiApi, type AIBot, type AIMessage } from '../api/chat'
 export const useAIStore = defineStore('ai', () => {
   const bots = ref<AIBot[]>([])
   const currentBot = ref<AIBot | null>(null)
-  const messages = ref<Map<number, AIMessage[]>>(new Map())
+  const messages = ref<Record<number, AIMessage[]>>({})
   const loading = ref(false)
   const sending = ref(false)
 
   // Load available AI bots
   const loadBots = async () => {
     try {
-      const response = await aiApi.getBots() as any
-      if (response.code === 0) {
-        bots.value = response.data.bots || []
+      const response = await aiApi.getBots()
+      if ((response as any).code === 0) {
+        bots.value = (response as any).data.bots || []
       }
     } catch (error: any) {
       console.error('Failed to load AI bots:', error)
@@ -24,14 +24,35 @@ export const useAIStore = defineStore('ai', () => {
 
   // Get messages for a bot
   const getBotMessages = (botId: number): AIMessage[] => {
-    return messages.value.get(botId) || []
+    return messages.value[botId] || []
+  }
+
+  // Load messages from localStorage
+  const loadMessagesFromStorage = () => {
+    try {
+      const stored = localStorage.getItem('ai_messages')
+      if (stored) {
+        messages.value = JSON.parse(stored)
+      }
+    } catch (e) {
+      console.error('Failed to load AI messages from storage', e)
+    }
+  }
+
+  // Save messages to localStorage
+  const saveMessagesToStorage = () => {
+    try {
+      localStorage.setItem('ai_messages', JSON.stringify(messages.value))
+    } catch (e) {
+      console.error('Failed to save AI messages to storage', e)
+    }
   }
 
   // Set current bot
-  const setCurrentBot = (bot: AIBot | null) => {
+  const setCurrentBot = (bot: AIBot) => {
     currentBot.value = bot
-    if (bot && !messages.value.has(bot.id)) {
-      messages.value.set(bot.id, [])
+    if (!messages.value[bot.id]) {
+      messages.value[bot.id] = []
     }
   }
 
@@ -48,25 +69,33 @@ export const useAIStore = defineStore('ai', () => {
       timestamp: Date.now()
     }
 
-    const botMessages = messages.value.get(botId) || []
-    botMessages.push(userMsg)
-    messages.value.set(botId, botMessages)
+    if (!messages.value[botId]) {
+      messages.value[botId] = []
+    }
+    
+    const newMsgs = [...(messages.value[botId] || []), userMsg]
+    messages.value = { ...messages.value, [botId]: newMsgs }
+    saveMessagesToStorage()
 
     try {
       const response = await aiApi.sendMessage({
         bot_id: botId,
         message: userMessage
-      }) as any
+      })
 
-      if (response.code === 0) {
+      if ((response as any).code === 0) {
         // Add AI response
         const aiMsg: AIMessage = {
           role: 'assistant',
-          content: response.data.reply,
+          content: (response as any).data.reply,
           timestamp: Date.now()
         }
-        botMessages.push(aiMsg)
-        return response.data.reply
+        
+        const updatedMsgs = [...(messages.value[botId] || []), aiMsg]
+        messages.value = { ...messages.value, [botId]: updatedMsgs }
+        saveMessagesToStorage()
+
+        return (response as any).data.reply
       }
       return null
     } catch (error: any) {
@@ -79,13 +108,20 @@ export const useAIStore = defineStore('ai', () => {
 
   // Clear messages for a bot
   const clearMessages = (botId: number) => {
-    messages.value.delete(botId)
+    const newMessages = { ...messages.value }
+    delete newMessages[botId]
+    messages.value = newMessages
+    saveMessagesToStorage()
   }
 
   // Clear all messages
   const clearAllMessages = () => {
-    messages.value.clear()
+    messages.value = {}
+    saveMessagesToStorage()
   }
+
+  // Initialize
+  loadMessagesFromStorage()
 
   // Get default bots (system bots)
   const defaultBots = ref<AIBot[]>([

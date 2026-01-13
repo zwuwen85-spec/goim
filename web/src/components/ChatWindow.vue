@@ -170,7 +170,12 @@ const handleSend = () => {
 const scrollToBottom = () => {
   nextTick(() => {
     if (messagesRef.value) {
-      messagesRef.value.scrollTop = messagesRef.value.scrollHeight
+      const lastMessage = messagesRef.value.lastElementChild
+      if (lastMessage) {
+        lastMessage.scrollIntoView({ behavior: 'smooth', block: 'end' })
+      } else {
+        messagesRef.value.scrollTop = messagesRef.value.scrollHeight
+      }
     }
   })
 }
