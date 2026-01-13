@@ -27,6 +27,27 @@ export const useAIStore = defineStore('ai', () => {
     return messages.value[botId] || []
   }
 
+  // Load messages from localStorage
+  const loadMessagesFromStorage = () => {
+    try {
+      const stored = localStorage.getItem('ai_messages')
+      if (stored) {
+        messages.value = JSON.parse(stored)
+      }
+    } catch (e) {
+      console.error('Failed to load AI messages from storage', e)
+    }
+  }
+
+  // Save messages to localStorage
+  const saveMessagesToStorage = () => {
+    try {
+      localStorage.setItem('ai_messages', JSON.stringify(messages.value))
+    } catch (e) {
+      console.error('Failed to save AI messages to storage', e)
+    }
+  }
+
   // Set current bot
   const setCurrentBot = (bot: AIBot) => {
     currentBot.value = bot
@@ -52,12 +73,9 @@ export const useAIStore = defineStore('ai', () => {
       messages.value[botId] = []
     }
     
-    // Trigger reactivity by reassigning array or using reactive object
-    // For simple ref object, pushing to array inside might not trigger deep watch if not deep
-    // But store refs are usually reactive. 
-    // Let's create a new array to be sure
     const newMsgs = [...(messages.value[botId] || []), userMsg]
     messages.value = { ...messages.value, [botId]: newMsgs }
+    saveMessagesToStorage()
 
     try {
       const response = await aiApi.sendMessage({
@@ -75,6 +93,7 @@ export const useAIStore = defineStore('ai', () => {
         
         const updatedMsgs = [...(messages.value[botId] || []), aiMsg]
         messages.value = { ...messages.value, [botId]: updatedMsgs }
+        saveMessagesToStorage()
         
         return (response as any).data.reply
       }
@@ -92,12 +111,17 @@ export const useAIStore = defineStore('ai', () => {
     const newMessages = { ...messages.value }
     delete newMessages[botId]
     messages.value = newMessages
+    saveMessagesToStorage()
   }
 
   // Clear all messages
   const clearAllMessages = () => {
     messages.value = {}
+    saveMessagesToStorage()
   }
+
+  // Initialize
+  loadMessagesFromStorage()
 
   // Get default bots (system bots)
   const defaultBots = ref<AIBot[]>([
