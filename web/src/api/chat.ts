@@ -148,6 +148,7 @@ export interface AIMessage {
   role: 'user' | 'assistant' | 'system'
   content: string
   timestamp?: number
+  seq?: number
 }
 
 // Auth API

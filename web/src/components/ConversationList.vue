@@ -43,7 +43,7 @@ const groupStore = useGroupStore()
 
 const currentConvId = computed(() => {
   if (!chatStore.currentSession) return ''
-  return `${chatStore.currentSession.targetId}:${chatStore.currentSession.targetType === 'group' ? 2 : 1}`
+  return `${chatStore.currentSession.targetId}:${chatStore.currentSession.targetType === 'group' ? 2 : (chatStore.currentSession.targetType === 'ai' ? 3 : 1)}`
 })
 
 const getName = (conv: any) => {
@@ -66,6 +66,13 @@ const getName = (conv: any) => {
     const group = groupStore.getGroupById(conv.target_id)
     if (group) return group.name
     return `Group ${conv.target_id}`
+  }
+
+  // 4. If AI chat (type 3)
+  if (conv.conversation_type === 3) {
+    // If target_user is faked, it might have nickname
+    if (conv.target_user?.nickname) return conv.target_user.nickname
+    return `AI ${conv.target_id}`
   }
 
   return `User ${conv.target_id}`

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { aiApi, type AIBot, type AIMessage } from '../api/chat'
+import { aiApi, messageApi, type AIBot, type AIMessage } from '../api/chat'
+import { useChatStore } from './chat'
 
 export const useAIStore = defineStore('ai', () => {
   const bots = ref<AIBot[]>([])
@@ -48,11 +49,97 @@ export const useAIStore = defineStore('ai', () => {
     }
   }
 
+  // Load history from server
+  const loadHistory = async (botId: number) => {
+    try {
+      // AI chat uses conversation_type = 3
+      // conversation_id = botId
+      const response = await messageApi.getHistory({
+        conversation_id: botId,
+        conversation_type: 3,
+        limit: 50
+      })
+      
+      if ((response as any).code === 0) {
+        const backendMessages = (response as any).data?.messages || []
+        // Map to AIMessage
+        const mappedMessages: AIMessage[] = backendMessages.map((m: any) => ({
+          role: m.from_user_id === botId ? 'assistant' : 'user',
+          content: m.content,
+          timestamp: new Date(m.created_at).getTime(),
+          seq: m.seq // Store sequence number for pagination
+        }))
+        
+        // Sort by timestamp
+        mappedMessages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+
+        // Update store
+        messages.value = { ...messages.value, [botId]: mappedMessages }
+        // Update localStorage as cache
+        saveMessagesToStorage()
+      }
+    } catch (e) {
+      console.error('Failed to load AI history', e)
+    }
+  }
+
+  // Load more history from server (pagination)
+  const loadMoreMessages = async (botId: number): Promise<number> => {
+    try {
+      const currentMessages = messages.value[botId] || []
+      if (currentMessages.length === 0) return 0
+
+      // Find oldest message with a sequence number
+      const oldestMsg = currentMessages.find(m => m.seq !== undefined)
+      if (!oldestMsg || oldestMsg.seq === undefined) return 0
+
+      const response = await messageApi.getHistory({
+        conversation_id: botId,
+        conversation_type: 3,
+        limit: 20,
+        last_seq: oldestMsg.seq
+      })
+
+      if ((response as any).code === 0) {
+        const newBackendMessages = (response as any).data?.messages || []
+        if (newBackendMessages.length === 0) return 0
+
+        // Map to AIMessage
+        const mappedNewMessages: AIMessage[] = newBackendMessages.map((m: any) => ({
+          role: m.from_user_id === botId ? 'assistant' : 'user',
+          content: m.content,
+          timestamp: new Date(m.created_at).getTime(),
+          seq: m.seq
+        }))
+
+        // Filter duplicates
+        const existingTimestamps = new Set(currentMessages.map(m => m.timestamp))
+        const uniqueNewMessages = mappedNewMessages.filter(m => !existingTimestamps.has(m.timestamp))
+
+        if (uniqueNewMessages.length > 0) {
+          const combined = [...uniqueNewMessages, ...currentMessages]
+          combined.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+          
+          messages.value = { ...messages.value, [botId]: combined }
+          saveMessagesToStorage()
+          return uniqueNewMessages.length
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load more AI history', e)
+    }
+    return 0
+  }
+
   // Set current bot
   const setCurrentBot = (bot: AIBot) => {
     currentBot.value = bot
-    if (!messages.value[bot.id]) {
-      messages.value[bot.id] = []
+    if (bot) {
+      if (!messages.value[bot.id]) {
+        messages.value[bot.id] = []
+      }
+      // Load history from server
+      loadHistory(bot.id)
     }
   }
 
@@ -62,7 +149,7 @@ export const useAIStore = defineStore('ai', () => {
 
     sending.value = true
 
-    // Add user message
+    // Add user message (optimistic update)
     const userMsg: AIMessage = {
       role: 'user',
       content: userMessage,
@@ -95,6 +182,15 @@ export const useAIStore = defineStore('ai', () => {
         messages.value = { ...messages.value, [botId]: updatedMsgs }
         saveMessagesToStorage()
 
+        // Update conversation list preview with AI reply
+        const chatStore = useChatStore()
+        chatStore.updateConversation(
+          botId, 
+          3, 
+          aiMsg.content, 
+          new Date().toISOString()
+        )
+
         return (response as any).data.reply
       }
       return null
@@ -108,10 +204,17 @@ export const useAIStore = defineStore('ai', () => {
 
   // Clear messages for a bot
   const clearMessages = (botId: number) => {
-    const newMessages = { ...messages.value }
-    delete newMessages[botId]
-    messages.value = newMessages
+    messages.value = { ...messages.value, [botId]: [] }
     saveMessagesToStorage()
+    
+    // Also clear conversation list preview
+    const chatStore = useChatStore()
+    chatStore.updateConversation(
+      botId, 
+      3, 
+      '', 
+      new Date().toISOString()
+    )
   }
 
   // Clear all messages
@@ -121,6 +224,7 @@ export const useAIStore = defineStore('ai', () => {
   }
 
   // Initialize
+  loadBots()
   loadMessagesFromStorage()
 
   // Get default bots (system bots)
@@ -149,6 +253,7 @@ export const useAIStore = defineStore('ai', () => {
     sendMessage,
     clearMessages,
     clearAllMessages,
-    getBotById
+    getBotById,
+    loadMoreMessages
   }
 })

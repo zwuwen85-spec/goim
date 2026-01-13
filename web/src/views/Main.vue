@@ -111,6 +111,7 @@
             :avatar-style="sessionAvatarStyle"
             :sending="isSending"
             :loading="isLoadingMessages"
+            :has-more="hasMoreMessages"
             :show-sender-name="activeSessionType === 'group'"
             :get-sender-name="getSenderName"
             :get-sender-avatar="getSenderAvatar"
@@ -267,6 +268,11 @@ const isSending = computed(() => {
 
 const isLoadingMessages = ref(false)
 
+const hasMoreMessages = computed(() => {
+  if (activeSessionType.value === 'ai') return false // AI history not paginated yet or managed by AI store
+  return !(chatStore.currentSession as any)?.isHistoryAllLoaded
+})
+
 // Handlers
 const handleConversationSelect = async (conv: any) => {
   console.log('handleConversationSelect:', conv.conversation_type, 'current activeSessionType:', activeSessionType.value)
@@ -277,15 +283,42 @@ const handleConversationSelect = async (conv: any) => {
 
   await nextTick()
 
-  activeSessionType.value = conv.conversation_type === 2 ? 'group' : 'private'
+  if (conv.conversation_type === 3) {
+    activeSessionType.value = 'ai'
+    const bot = aiStore.getBotById(conv.target_id)
+    if (bot) {
+      aiStore.setCurrentBot(bot)
+    }
+  } else {
+    activeSessionType.value = conv.conversation_type === 2 ? 'group' : 'private'
+  }
+
   const name = parseSqlNullString(conv.target_user?.nickname)
   const avatar = parseSqlNullString(conv.target_user?.avatar)
-  await chatStore.openChat(conv.target_id, conv.conversation_type, name, avatar)
+  
+  // For AI, we might need to get name/avatar from bot info if target_user is empty
+  let finalName = name
+  let finalAvatar = avatar
+  if (conv.conversation_type === 3) {
+     const bot = aiStore.getBotById(conv.target_id)
+     if (bot) {
+       finalName = bot.name
+       // finalAvatar = bot.avatar // bots don't have avatar url yet, use style
+     }
+  }
+
+  await chatStore.openChat(conv.target_id, conv.conversation_type, finalName, finalAvatar)
 
   if (activeSessionType.value === 'group') {
     // Sync group store if needed
     // groupStore.setCurrentGroup(...) // logic needs to match
     await loadGroupMembers(conv.target_id)
+  }
+
+  // Ensure sidebar switches to 'chats' if we are in search or other tabs, 
+  // though typically ConversationList is in 'chats' tab already.
+  if (activeTab.value !== 'chats') {
+    activeTab.value = 'chats'
   }
 
   console.log('after handleConversationSelect, activeSessionType:', activeSessionType.value, 'showGroupSidebar:', showGroupSidebar.value)
@@ -302,7 +335,7 @@ const handleFriendChat = (friend: any) => {
   
   // Clear AI state if switching from AI
   if (activeSessionType.value === 'ai') {
-     aiStore.setCurrentBot(null)
+     aiStore.setCurrentBot(null as any)
   }
 
   activeSessionType.value = 'private'
@@ -325,7 +358,7 @@ const handleGroupSelect = async (group: any) => {
   await groupStore.setCurrentGroup(group)
   chatStore.openChat(group.id, 2, group.name)
   await loadGroupMembers(group.id)
-  // activeTab.value = 'chats' // Optional: stay on groups or switch? Switching is better for "Chat" context
+  activeTab.value = 'chats' // Switch to chat tab to show conversation list
 
   console.log('after handleGroupSelect, activeSessionType:', activeSessionType.value, 'showGroupSidebar:', showGroupSidebar.value)
 }
@@ -336,6 +369,11 @@ const handleBotSelect = (bot: any) => {
   activeSessionType.value = 'ai'
   showGroupSidebar.value = false
   aiStore.setCurrentBot(bot)
+  
+  // Add to conversation list
+  chatStore.openChat(bot.id, 3, bot.name)
+  
+  activeTab.value = 'chats' // Switch to chat tab
 
   console.log('after handleBotSelect, activeSessionType:', activeSessionType.value, 'showGroupSidebar:', showGroupSidebar.value)
 }
@@ -359,16 +397,17 @@ const handleSendMessage = async (content: string) => {
 const handleLoadMore = async () => {
   if (isLoadingMessages.value) return
   
-  if (activeSessionType.value === 'ai') {
-    // AI history loading not implemented yet
-    return
-  }
-  
   isLoadingMessages.value = true
   try {
-    const count = await chatStore.loadMoreMessages()
-    if (count === 0) {
-      // No more messages, maybe show a toast or just stop trying?
+    if (activeSessionType.value === 'ai') {
+      if (aiStore.currentBot) {
+        await aiStore.loadMoreMessages(aiStore.currentBot.id)
+      }
+    } else {
+      const count = await chatStore.loadMoreMessages()
+      if (count === 0) {
+        // No more messages
+      }
     }
   } finally {
     isLoadingMessages.value = false
@@ -471,7 +510,68 @@ onMounted(async () => {
   } catch (e) {
     console.warn('WS failed', e)
   }
+
+  // Restore UI state
+  try {
+    const stored = localStorage.getItem('app_state')
+    if (stored) {
+      const state = JSON.parse(stored)
+      if (state.activeTab) activeTab.value = state.activeTab
+      
+      if (state.activeSessionType && state.currentSessionId) {
+        if (state.activeSessionType === 'ai') {
+          await aiStore.loadBots()
+          const bot = aiStore.getBotById(state.currentSessionId)
+          if (bot) {
+             aiStore.setCurrentBot(bot)
+             activeSessionType.value = 'ai'
+          }
+        } else if (state.activeSessionType === 'group') {
+           await groupStore.loadGroups()
+           const group = groupStore.getGroupById(state.currentSessionId)
+           if (group) {
+             await groupStore.setCurrentGroup(group)
+             chatStore.openChat(group.id, 2, group.name)
+             activeSessionType.value = 'group'
+             await loadGroupMembers(group.id)
+           }
+        } else if (state.activeSessionType === 'private') {
+           chatStore.openChat(state.currentSessionId, 1, state.currentSessionName, state.currentSessionAvatar)
+           activeSessionType.value = 'private'
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Failed to restore state', e)
+  }
 })
+
+// Persistence state
+const saveState = () => {
+  try {
+    const state = {
+      activeTab: activeTab.value,
+      activeSessionType: activeSessionType.value,
+      currentSessionId: activeSessionType.value === 'ai' ? aiStore.currentBot?.id : 
+                        activeSessionType.value === 'group' ? groupStore.currentGroup?.id :
+                        chatStore.currentSession?.targetId,
+      currentSessionName: activeSessionType.value === 'ai' ? aiStore.currentBot?.name :
+                          activeSessionType.value === 'group' ? groupStore.currentGroup?.name :
+                          chatStore.currentSession?.name,
+      currentSessionAvatar: activeSessionType.value === 'ai' ? undefined :
+                            activeSessionType.value === 'group' ? undefined :
+                            chatStore.currentSession?.avatar
+    }
+    localStorage.setItem('app_state', JSON.stringify(state))
+  } catch (e) {
+    console.error('Failed to save state', e)
+  }
+}
+
+// Watchers for persistence
+watch([activeTab, activeSessionType, () => chatStore.currentSession?.id, () => aiStore.currentBot?.id], () => {
+  saveState()
+}, { deep: true })
 
 onUnmounted(() => {
   stopPolling()

@@ -114,6 +114,7 @@ const props = defineProps<{
   avatarStyle?: any
   sending?: boolean
   loading?: boolean
+  hasMore?: boolean
   showSenderName?: boolean
   getSenderName?: (msg: any) => string
   getSenderAvatar?: (msg: any) => string
@@ -128,6 +129,8 @@ const firstMsgId = ref<string | number | null>(null)
 
 const handleScroll = () => {
   if (!messagesRef.value || props.loading) return
+  if (props.hasMore === false) return // Don't load if no more
+  
   if (messagesRef.value.scrollTop < 20 && props.messages.length > 0) {
     emit('load-more')
   }
@@ -207,10 +210,11 @@ watch(() => props.messages, async (newMsgs) => {
   
   if (wasAtBottom) {
     el.scrollTop = el.scrollHeight
-  } else if (isPrepend && oldTop < 50) {
-    // If we were at top (loading history), maintain relative position
-    el.scrollTop = el.scrollHeight - oldHeight + oldTop
-  }
+  } 
+  // else if (isPrepend && oldTop < 50) {
+  //   // Browser scroll anchoring should handle this now
+  //   // el.scrollTop = el.scrollHeight - oldHeight + oldTop
+  // }
 }, { deep: true })
 
 onMounted(() => {
@@ -285,6 +289,25 @@ const getSenderStyle = props.getSenderStyle || defaultGetSenderStyle
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.no-more-history {
+  text-align: center;
+  padding: 12px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  opacity: 0.8;
+  transform: scale(0.9);
+}
+
+.loading-bar {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 12px 0;
+  color: var(--primary-color);
+  height: 40px; /* Fixed height to minimize layout shift calculation errors */
+  box-sizing: border-box;
 }
 
 .message-time-divider {
