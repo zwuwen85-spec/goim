@@ -3,6 +3,8 @@ package logic
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/Terry-Mao/goim/api/protocol"
@@ -13,6 +15,8 @@ import (
 
 // Connect connected a conn.
 func (l *Logic) Connect(c context.Context, server, cookie string, token []byte) (mid int64, key, roomID string, accepts []int32, hb int64, err error) {
+	fmt.Fprintf(os.Stderr, "=== LOGIC Connect START: server=%s token=%s ===\n", server, string(token))
+	log.Infof("Connect called: server=%s cookie=%s token=%s", server, cookie, string(token))
 	var params struct {
 		Mid      int64   `json:"mid"`
 		Key      string  `json:"key"`
@@ -22,8 +26,11 @@ func (l *Logic) Connect(c context.Context, server, cookie string, token []byte) 
 	}
 	if err = json.Unmarshal(token, &params); err != nil {
 		log.Errorf("json.Unmarshal(%s) error(%v)", token, err)
+		fmt.Fprintf(os.Stderr, "=== LOGIC JSON UNMARSHAL ERROR: %v ===\n", err)
 		return
 	}
+	fmt.Fprintf(os.Stderr, "=== LOGIC Connect parsed: mid=%d key=%s roomID=%s ===\n", params.Mid, params.Key, params.RoomID)
+	log.Infof("Connect parsed: mid=%d key=%s roomID=%s", params.Mid, params.Key, params.RoomID)
 	mid = params.Mid
 	roomID = params.RoomID
 	accepts = params.Accepts
@@ -31,9 +38,14 @@ func (l *Logic) Connect(c context.Context, server, cookie string, token []byte) 
 	if key = params.Key; key == "" {
 		key = uuid.New().String()
 	}
+	fmt.Fprintf(os.Stderr, "=== LOGIC before AddMapping: mid=%d key=%s server=%s ===\n", mid, key, server)
+	log.Infof("Connect before AddMapping: mid=%d key=%s server=%s", mid, key, server)
 	if err = l.dao.AddMapping(c, mid, key, server); err != nil {
 		log.Errorf("l.dao.AddMapping(%d,%s,%s) error(%v)", mid, key, server, err)
+		fmt.Fprintf(os.Stderr, "=== LOGIC AddMapping ERROR: %v ===\n", err)
+		return
 	}
+	fmt.Fprintf(os.Stderr, "=== LOGIC Connect SUCCESS: mid=%d key=%s ===\n", mid, key)
 	log.Infof("conn connected key:%s server:%s mid:%d token:%s", key, server, mid, token)
 	return
 }

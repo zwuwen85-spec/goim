@@ -35,11 +35,13 @@
 import { computed } from 'vue'
 import { useChatStore } from '../store/chat'
 import { useGroupStore } from '../store/group'
+import { useUserStore } from '../store/user'
 import { parseSqlNullString } from '../utils/format'
 
 const emit = defineEmits(['select'])
 const chatStore = useChatStore()
 const groupStore = useGroupStore()
+const userStore = useUserStore()
 
 const currentConvId = computed(() => {
   if (!chatStore.currentSession) return ''
@@ -79,13 +81,18 @@ const getName = (conv: any) => {
 }
 
 const getAvatar = (conv: any) => {
-  // 1. Try to get from target_user
+  // 1. For private chat, check if it's the current user
+  if (conv.conversation_type === 1 && userStore.currentUser?.id === conv.target_id) {
+    return userStore.currentUser.avatar
+  }
+
+  // 2. Try to get from target_user
   const directAvatar = parseSqlNullString(conv.target_user?.avatar)
   if (directAvatar) return directAvatar
 
-  // 2. If private chat, look up in friends list
+  // 3. If private chat, look up in friends list
   if (conv.conversation_type === 1) {
-    const friend = chatStore.friends.find(f => 
+    const friend = chatStore.friends.find(f =>
       (f.friend_user?.id === conv.target_id) || (f.friend_id === conv.target_id)
     )
     if (friend) {
@@ -93,7 +100,7 @@ const getAvatar = (conv: any) => {
     }
   }
 
-  // 3. If group chat, look up in group store
+  // 4. If group chat, look up in group store
   if (conv.conversation_type === 2) {
     const group = groupStore.getGroupById(conv.target_id)
     if (group) return parseSqlNullString(group.avatar)

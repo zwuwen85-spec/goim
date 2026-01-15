@@ -8,6 +8,13 @@ export const useGroupStore = defineStore('group', () => {
   const members = ref<GroupMember[]>([])
   const loading = ref(false)
 
+  // Clear all data (for account switching)
+  const clearAll = () => {
+    groups.value = []
+    currentGroup.value = null
+    members.value = []
+  }
+
   // Load user's groups
   const loadGroups = async () => {
     loading.value = true
@@ -148,6 +155,7 @@ export const useGroupStore = defineStore('group', () => {
     currentGroup,
     members,
     loading,
+    clearAll,
     loadGroups,
     createGroup,
     setCurrentGroup,

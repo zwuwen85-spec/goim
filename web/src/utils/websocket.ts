@@ -99,16 +99,15 @@ export function useWebSocket(wsUrl: string) {
         console.log('[WS] Disconnected')
         status.value = 'disconnected'
         stopHeartbeat()
-        // Only auto reconnect in production, not in development
-        if ((import.meta as any).env.PROD) {
-          reconnectTimeout = window.setTimeout(() => connect(token, userId), 5000)
-        }
+        // Auto reconnect in both production and development
+        reconnectTimeout = window.setTimeout(() => connect(token, userId), 5000)
       }
 
       ws.value.onerror = (error) => {
         console.error('[WS] Error:', error)
         status.value = 'error'
-        // Don't auto-retry on error in development
+        // Auto-retry on error
+        reconnectTimeout = window.setTimeout(() => connect(token, userId), 5000)
       }
     } catch (error) {
       console.error('[WS] Connection error:', error)

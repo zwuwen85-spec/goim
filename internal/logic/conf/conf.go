@@ -30,11 +30,11 @@ func init() {
 		defWeight, _ = strconv.ParseInt(os.Getenv("WEIGHT"), 10, 32)
 	)
 	flag.StringVar(&confPath, "conf", "logic-example.toml", "default config path")
-	flag.StringVar(&region, "region", os.Getenv("REGION"), "avaliable region. or use REGION env variable, value: sh etc.")
-	flag.StringVar(&zone, "zone", os.Getenv("ZONE"), "avaliable zone. or use ZONE env variable, value: sh001/sh002 etc.")
-	flag.StringVar(&deployEnv, "deploy.env", os.Getenv("DEPLOY_ENV"), "deploy env. or use DEPLOY_ENV env variable, value: dev/fat1/uat/pre/prod etc.")
-	flag.StringVar(&host, "host", defHost, "machine hostname. or use default machine hostname.")
-	flag.Int64Var(&weight, "weight", defWeight, "load balancing weight, or use WEIGHT env variable, value: 10 etc.")
+	flag.StringVar(&region, "node.region", os.Getenv("REGION"), "avaliable region. or use REGION env variable, value: sh etc.")
+	flag.StringVar(&zone, "node.zone", os.Getenv("ZONE"), "avaliable zone. or use ZONE env variable, value: sh001/sh002 etc.")
+	flag.StringVar(&deployEnv, "node.deploy.env", os.Getenv("DEPLOY_ENV"), "deploy env. or use DEPLOY_ENV env variable, value: dev/fat1/uat/pre/prod etc.")
+	flag.StringVar(&host, "node.host", defHost, "machine hostname. or use default machine hostname.")
+	flag.Int64Var(&weight, "node.weight", defWeight, "load balancing weight, or use WEIGHT env variable, value: 10 etc.")
 }
 
 // Init init config.
@@ -58,7 +58,7 @@ func Default() *Config {
 		RPCClient: &RPCClient{Dial: xtime.Duration(time.Second), Timeout: xtime.Duration(time.Second)},
 		RPCServer: &RPCServer{
 			Network:           "tcp",
-			Addr:              "3119",
+			Addr:              "0.0.0.0:3119",
 			Timeout:           xtime.Duration(time.Second),
 			IdleTimeout:       xtime.Duration(time.Second * 60),
 			MaxLifeTime:       xtime.Duration(time.Hour * 2),

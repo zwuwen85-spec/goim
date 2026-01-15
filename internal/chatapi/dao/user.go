@@ -92,6 +92,20 @@ func (d *UserDAO) Update(ctx context.Context, user *model.User) error {
 	return err
 }
 
+// UpdatePassword updates user's password
+func (d *UserDAO) UpdatePassword(ctx context.Context, userID int64, passwordHash string) error {
+	query := `UPDATE users SET password_hash = ? WHERE id = ?`
+	_, err := d.mysql.Exec(ctx, query, passwordHash, userID)
+	return err
+}
+
+// UpdateAvatar updates user's avatar URL
+func (d *UserDAO) UpdateAvatar(ctx context.Context, userID int64, avatarURL string) error {
+	query := `UPDATE users SET avatar_url = ? WHERE id = ?`
+	_, err := d.mysql.Exec(ctx, query, avatarURL, userID)
+	return err
+}
+
 // scanOne scans a user from a single row
 func (d *UserDAO) scanOne(scanner interface{ Scan(...interface{}) error }) (*model.User, error) {
 	var user model.User

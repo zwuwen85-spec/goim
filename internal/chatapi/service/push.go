@@ -28,24 +28,18 @@ func NewPushClient(endpoint string) *PushClient {
 
 // PushKeys pushes a message to specific users by their keys
 func (p *PushClient) PushKeys(ctx context.Context, operation int32, keys []string, msg []byte) error {
+	// Build URL with operation and keys as query parameters
 	url := fmt.Sprintf("%s/goim/push/keys?operation=%d", p.endpoint, operation)
-
-	// Create request body
-	reqBody := map[string]interface{}{
-		"keys": keys,
-		"msg":  string(msg),
-	}
-	jsonBody, err := json.Marshal(reqBody)
-	if err != nil {
-		return fmt.Errorf("marshal request: %w", err)
+	for _, key := range keys {
+		url += fmt.Sprintf("&keys=%s", key)
 	}
 
-	// Create request
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	// Create request with raw message bytes as body
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(msg))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/octet-stream")
 
 	// Send request
 	resp, err := p.client.Do(req)
@@ -67,21 +61,12 @@ func (p *PushClient) PushKeys(ctx context.Context, operation int32, keys []strin
 func (p *PushClient) PushRoom(ctx context.Context, operation int32, typ, room string, msg []byte) error {
 	url := fmt.Sprintf("%s/goim/push/room?operation=%d&type=%s&room=%s", p.endpoint, operation, typ, room)
 
-	// Create request body
-	reqBody := map[string]interface{}{
-		"msg": string(msg),
-	}
-	jsonBody, err := json.Marshal(reqBody)
-	if err != nil {
-		return fmt.Errorf("marshal request: %w", err)
-	}
-
-	// Create request
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	// Create request with raw message bytes as body
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(msg))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/octet-stream")
 
 	// Send request
 	resp, err := p.client.Do(req)

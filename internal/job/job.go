@@ -3,6 +3,7 @@ package job
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -27,23 +28,29 @@ type Job struct {
 
 // New new a push job.
 func New(c *conf.Config) *Job {
+	fmt.Fprintf(os.Stderr, "=== JOB: New() START ===\n")
 	j := &Job{
 		c:        c,
 		consumer: newKafkaSub(c.Kafka),
 		rooms:    make(map[string]*Room),
 	}
+	fmt.Fprintf(os.Stderr, "=== JOB: New() about to call watchComet ===\n")
 	j.watchComet(c.Discovery)
+	fmt.Fprintf(os.Stderr, "=== JOB: New() watchComet returned, returning Job ===\n")
 	return j
 }
 
 func newKafkaSub(c *conf.Kafka) *cluster.Consumer {
+	fmt.Fprintf(os.Stderr, "=== JOB: Creating Kafka consumer: brokers=%v topic=%s group=%s ===\n", c.Brokers, c.Topic, c.Group)
 	config := cluster.NewConfig()
 	config.Consumer.Return.Errors = true
 	config.Group.Return.Notifications = true
 	consumer, err := cluster.NewConsumer(c.Brokers, c.Group, []string{c.Topic}, config)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "=== JOB: Kafka consumer creation FAILED: %v ===\n", err)
 		panic(err)
 	}
+	fmt.Fprintf(os.Stderr, "=== JOB: Kafka consumer created successfully ===\n")
 	return consumer
 }
 
@@ -57,14 +64,21 @@ func (j *Job) Close() error {
 
 // Consume messages, watch signals
 func (j *Job) Consume() {
+	fmt.Fprintf(os.Stderr, "=== JOB: Consume() starting ===\n")
+	msgCount := 0
 	for {
 		select {
 		case err := <-j.consumer.Errors():
 			log.Errorf("consumer error(%v)", err)
+			fmt.Fprintf(os.Stderr, "=== JOB: Consumer error: %v ===\n", err)
 		case n := <-j.consumer.Notifications():
 			log.Infof("consumer rebalanced(%v)", n)
+			fmt.Fprintf(os.Stderr, "=== JOB: Consumer rebalanced: %v ===\n", n)
 		case msg, ok := <-j.consumer.Messages():
+			msgCount++
+			fmt.Fprintf(os.Stderr, "=== JOB: Message #%d received: topic=%s partition=%d offset=%d key=%s ===\n", msgCount, msg.Topic, msg.Partition, msg.Offset, msg.Key)
 			if !ok {
+				fmt.Fprintf(os.Stderr, "=== JOB: Consumer channel closed, exiting ===\n")
 				return
 			}
 			j.consumer.MarkOffset(msg, "")
@@ -72,10 +86,15 @@ func (j *Job) Consume() {
 			pushMsg := new(pb.PushMsg)
 			if err := proto.Unmarshal(msg.Value, pushMsg); err != nil {
 				log.Errorf("proto.Unmarshal(%v) error(%v)", msg, err)
+				fmt.Fprintf(os.Stderr, "=== JOB: Unmarshal error: %v ===\n", err)
 				continue
 			}
+			fmt.Fprintf(os.Stderr, "=== JOB: PushMsg parsed: Type=%d Server=%s Keys=%v ===\n", pushMsg.Type, pushMsg.Server, pushMsg.Keys)
 			if err := j.push(context.Background(), pushMsg); err != nil {
 				log.Errorf("j.push(%v) error(%v)", pushMsg, err)
+				fmt.Fprintf(os.Stderr, "=== JOB: Push error: %v ===\n", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "=== JOB: Push SUCCESS ===\n")
 			}
 			log.Infof("consume: %s/%d/%d\t%s\t%+v", msg.Topic, msg.Partition, msg.Offset, msg.Key, pushMsg)
 		}
@@ -83,9 +102,13 @@ func (j *Job) Consume() {
 }
 
 func (j *Job) watchComet(c *naming.Config) {
+	fmt.Fprintf(os.Stderr, "=== JOB: watchComet() START ===\n")
 	dis := naming.New(c)
+	fmt.Fprintf(os.Stderr, "=== JOB: watchComet() discovery created ===\n")
 	resolver := dis.Build("goim.comet")
+	fmt.Fprintf(os.Stderr, "=== JOB: watchComet() resolver built for goim.comet ===\n")
 	event := resolver.Watch()
+	fmt.Fprintf(os.Stderr, "=== JOB: watchComet() about to enter initial select ===\n")
 	select {
 	case _, ok := <-event:
 		if !ok {
@@ -100,6 +123,7 @@ func (j *Job) watchComet(c *naming.Config) {
 	case <-time.After(10 * time.Second):
 		log.Error("watchComet init instances timeout")
 	}
+	fmt.Fprintf(os.Stderr, "=== JOB: watchComet() initial select completed, starting goroutine ===\n")
 	go func() {
 		for {
 			if _, ok := <-event; !ok {

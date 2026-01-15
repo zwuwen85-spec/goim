@@ -2,7 +2,9 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 	"net"
+	"os"
 	"time"
 
 	pb "github.com/Terry-Mao/goim/api/comet"
@@ -45,21 +47,31 @@ var _ pb.CometServer = &server{}
 
 // PushMsg push a message to specified sub keys.
 func (s *server) PushMsg(ctx context.Context, req *pb.PushMsgReq) (reply *pb.PushMsgReply, err error) {
+	fmt.Fprintf(os.Stderr, "=== COMET PushMsg: keys=%v protoOp=%d ===\n", req.Keys, req.ProtoOp)
 	if len(req.Keys) == 0 || req.Proto == nil {
+		fmt.Fprintf(os.Stderr, "=== COMET PushMsg: invalid args (keys empty or proto nil) ===\n")
 		return nil, errors.ErrPushMsgArg
 	}
 	for _, key := range req.Keys {
+		fmt.Fprintf(os.Stderr, "=== COMET PushMsg: processing key=%s ===\n", key)
 		bucket := s.srv.Bucket(key)
 		if bucket == nil {
+			fmt.Fprintf(os.Stderr, "=== COMET PushMsg: bucket is nil for key=%s ===\n", key)
 			continue
 		}
+		fmt.Fprintf(os.Stderr, "=== COMET PushMsg: got bucket for key=%s ===\n", key)
 		if channel := bucket.Channel(key); channel != nil {
+			fmt.Fprintf(os.Stderr, "=== COMET PushMsg: got channel for key=%s, NeedPush=%v ===\n", key, channel.NeedPush(req.ProtoOp))
 			if !channel.NeedPush(req.ProtoOp) {
 				continue
 			}
 			if err = channel.Push(req.Proto); err != nil {
+				fmt.Fprintf(os.Stderr, "=== COMET PushMsg: Push error for key=%s: %v ===\n", key, err)
 				return
 			}
+			fmt.Fprintf(os.Stderr, "=== COMET PushMsg: Push SUCCESS for key=%s ===\n", key)
+		} else {
+			fmt.Fprintf(os.Stderr, "=== COMET PushMsg: channel is nil for key=%s ===\n", key)
 		}
 	}
 	return &pb.PushMsgReply{}, nil

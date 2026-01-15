@@ -2,6 +2,8 @@ package dao
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strconv"
 
 	pb "github.com/Terry-Mao/goim/api/logic"
@@ -12,6 +14,7 @@ import (
 
 // PushMsg push a message to databus.
 func (d *Dao) PushMsg(c context.Context, op int32, server string, keys []string, msg []byte) (err error) {
+	fmt.Fprintf(os.Stderr, "=== KAFKA PushMsg: op=%d server=%s keys=%v msg_len=%d ===\n", op, server, keys, len(msg))
 	pushMsg := &pb.PushMsg{
 		Type:      pb.PushMsg_PUSH,
 		Operation: op,
@@ -21,15 +24,22 @@ func (d *Dao) PushMsg(c context.Context, op int32, server string, keys []string,
 	}
 	b, err := proto.Marshal(pushMsg)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "=== KAFKA Marshal error: %v ===\n", err)
 		return
 	}
+	fmt.Fprintf(os.Stderr, "=== KAFKA Marshaled size: %d bytes ===\n", len(b))
 	m := &sarama.ProducerMessage{
 		Key:   sarama.StringEncoder(keys[0]),
 		Topic: d.c.Kafka.Topic,
 		Value: sarama.ByteEncoder(b),
 	}
-	if _, _, err = d.kafkaPub.SendMessage(m); err != nil {
+	fmt.Fprintf(os.Stderr, "=== KAFKA Sending to topic: %s ===\n", d.c.Kafka.Topic)
+	partition, offset, err := d.kafkaPub.SendMessage(m)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "=== KAFKA Send error: %v ===\n", err)
 		log.Errorf("PushMsg.send(push pushMsg:%v) error(%v)", pushMsg, err)
+	} else {
+		fmt.Fprintf(os.Stderr, "=== KAFKA Sent successfully: partition=%d offset=%d ===\n", partition, offset)
 	}
 	return
 }

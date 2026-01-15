@@ -1,17 +1,23 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"math/rand"
+	"net"
 	"os"
 	"os/signal"
 	"runtime"
+	"strconv"
 	"syscall"
 	"time"
 
+	"github.com/bilibili/discovery/naming"
+	resolver "github.com/bilibili/discovery/naming/grpc"
 	"github.com/Terry-Mao/goim/internal/comet"
 	"github.com/Terry-Mao/goim/internal/comet/conf"
 	"github.com/Terry-Mao/goim/internal/comet/grpc"
+	"github.com/Terry-Mao/goim/pkg/ip"
 	log "github.com/golang/glog"
 )
 
@@ -30,8 +36,8 @@ func main() {
 	println(conf.Conf.Debug)
 	log.Infof("goim-comet [version: %s env: %+v] start", ver, conf.Conf.Env)
 	// register discovery
-	// dis := naming.New(conf.Conf.Discovery)
-	// resolver.Register(dis)
+	dis := naming.New(conf.Conf.Discovery)
+	resolver.Register(dis)
 	// new comet server
 	srv := comet.NewServer(conf.Conf)
 	if err := comet.InitWhitelist(conf.Conf.Whitelist); err != nil {
@@ -50,7 +56,7 @@ func main() {
 	}
 	// new grpc server
 	rpcSrv := grpc.New(conf.Conf.RPCServer, srv)
-	// cancel := register(dis, srv)
+	cancel := register(dis, srv)
 	// signal
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)
@@ -59,9 +65,9 @@ func main() {
 		log.Infof("goim-comet get a signal %s", s.String())
 		switch s {
 		case syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT:
-			// if cancel != nil {
-			// 	cancel()
-			// }
+			if cancel != nil {
+				cancel()
+			}
 			rpcSrv.GracefulStop()
 			srv.Close()
 			log.Infof("goim-comet [version: %s] exit", ver)
@@ -72,4 +78,33 @@ func main() {
 			return
 		}
 	}
+}
+
+func register(dis *naming.Discovery, srv *comet.Server) context.CancelFunc {
+	env := conf.Conf.Env
+	addr := ip.InternalIP()
+	_, port, _ := net.SplitHostPort(conf.Conf.RPCServer.Addr)
+	// Use first websocket bind address
+	wsBind := conf.Conf.Websocket.Bind[0]
+	_, wsPort, _ := net.SplitHostPort(wsBind)
+	ins := &naming.Instance{
+		Region:   env.Region,
+		Zone:     env.Zone,
+		Env:      env.DeployEnv,
+		Hostname: env.Host,
+		AppID:    appid,
+		Addrs: []string{
+			"grpc://" + addr + ":" + port,
+			"ws://" + addr + ":" + wsPort,
+		},
+		Metadata: map[string]string{
+			"weight":  strconv.FormatInt(env.Weight, 10),
+			"offline": strconv.FormatBool(env.Offline),
+		},
+	}
+	cancel, err := dis.Register(ins)
+	if err != nil {
+		panic(err)
+	}
+	return cancel
 }

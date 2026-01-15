@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 
 	"github.com/Terry-Mao/goim/internal/logic/model"
@@ -44,38 +45,54 @@ func (d *Dao) pingRedis(c context.Context) (err error) {
 //	mid -> key_server
 //	key -> server
 func (d *Dao) AddMapping(c context.Context, mid int64, key, server string) (err error) {
+	fmt.Fprintf(os.Stderr, "=== REDIS AddMapping START: mid=%d key=%s server=%s ===\n", mid, key, server)
 	conn := d.redis.Get()
 	defer conn.Close()
 	var n = 2
 	if mid > 0 {
+		fmt.Fprintf(os.Stderr, "=== REDIS HSET %s %s %s ===\n", keyMidServer(mid), key, server)
 		if err = conn.Send("HSET", keyMidServer(mid), key, server); err != nil {
 			log.Errorf("conn.Send(HSET %d,%s,%s) error(%v)", mid, server, key, err)
+			fmt.Fprintf(os.Stderr, "=== REDIS HSET ERROR: %v ===\n", err)
 			return
 		}
 		if err = conn.Send("EXPIRE", keyMidServer(mid), d.redisExpire); err != nil {
 			log.Errorf("conn.Send(EXPIRE %d,%s,%s) error(%v)", mid, key, server, err)
+			fmt.Fprintf(os.Stderr, "=== REDIS EXPIRE(mid) ERROR: %v ===\n", err)
 			return
 		}
 		n += 2
 	}
+	fmt.Fprintf(os.Stderr, "=== REDIS SET %s %s ===\n", keyKeyServer(key), server)
 	if err = conn.Send("SET", keyKeyServer(key), server); err != nil {
 		log.Errorf("conn.Send(HSET %d,%s,%s) error(%v)", mid, server, key, err)
+		fmt.Fprintf(os.Stderr, "=== REDIS SET ERROR: %v ===\n", err)
 		return
 	}
 	if err = conn.Send("EXPIRE", keyKeyServer(key), d.redisExpire); err != nil {
 		log.Errorf("conn.Send(EXPIRE %d,%s,%s) error(%v)", mid, key, server, err)
+		fmt.Fprintf(os.Stderr, "=== REDIS EXPIRE(key) ERROR: %v ===\n", err)
 		return
 	}
+	fmt.Fprintf(os.Stderr, "=== REDIS FLUSH ===\n")
 	if err = conn.Flush(); err != nil {
 		log.Errorf("conn.Flush() error(%v)", err)
+		fmt.Fprintf(os.Stderr, "=== REDIS FLUSH ERROR: %v ===\n", err)
 		return
 	}
 	for i := 0; i < n; i++ {
+		fmt.Fprintf(os.Stderr, "=== REDIS Receive %d/%d ===\n", i+1, n)
 		if _, err = conn.Receive(); err != nil {
 			log.Errorf("conn.Receive() error(%v)", err)
+			fmt.Fprintf(os.Stderr, "=== REDIS RECEIVE ERROR: %v ===\n", err)
 			return
 		}
 	}
+	fmt.Fprintf(os.Stderr, "=== REDIS AddMapping SUCCESS ===\n")
+	// Verify the key was actually written
+	fmt.Fprintf(os.Stderr, "=== REDIS Verify: GET %s ===\n", keyKeyServer(key))
+	v, err2 := conn.Do("GET", keyKeyServer(key))
+	fmt.Fprintf(os.Stderr, "=== REDIS Verify result: v=%v err=%v ===\n", v, err2)
 	return
 }
 
@@ -139,15 +156,21 @@ func (d *Dao) DelMapping(c context.Context, mid int64, key, server string) (has 
 
 // ServersByKeys get a server by key.
 func (d *Dao) ServersByKeys(c context.Context, keys []string) (res []string, err error) {
+	fmt.Fprintf(os.Stderr, "=== ServersByKeys START: keys=%v ===\n", keys)
 	conn := d.redis.Get()
 	defer conn.Close()
 	var args []interface{}
 	for _, key := range keys {
 		args = append(args, keyKeyServer(key))
+		fmt.Fprintf(os.Stderr, "=== ServersByKeys: looking for key=%s (redis key=%s) ===\n", key, keyKeyServer(key))
 	}
+	fmt.Fprintf(os.Stderr, "=== ServersByKeys: MGET args=%v ===\n", args)
 	if res, err = redis.Strings(conn.Do("MGET", args...)); err != nil {
 		log.Errorf("conn.Do(MGET %v) error(%v)", args, err)
+		fmt.Fprintf(os.Stderr, "=== ServersByKeys ERROR: %v ===\n", err)
+		return
 	}
+	fmt.Fprintf(os.Stderr, "=== ServersByKeys RESULT: res=%v ===\n", res)
 	return
 }
 
