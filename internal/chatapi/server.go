@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -155,6 +157,8 @@ func (s *Server) setupRoutes() {
 			{
 				user.GET("/profile", handler.Wrap(s.handleGetProfile))
 				user.PUT("/profile", handler.Wrap(s.handleUpdateProfile))
+				user.PUT("/password", handler.Wrap(s.handleChangePassword))
+				user.POST("/avatar", handler.Wrap(s.handleUploadAvatar))
 				user.GET("/search", handler.Wrap(s.handleSearchUsers))
 			}
 
@@ -217,6 +221,9 @@ func (s *Server) setupRoutes() {
 			}
 		}
 	}
+
+	// Static file serving for uploads
+	s.router.Static("/uploads", "./uploads")
 
 	// Health check
 	s.router.GET("/health", func(c *gin.Context) {
@@ -406,8 +413,149 @@ func (s *Server) handleGetProfile(c *gin.Context) (interface{}, error) {
 	}, nil
 }
 
+// UpdateProfileRequest represents a profile update request
+type UpdateProfileRequest struct {
+	Nickname  string `json:"nickname"`
+	Signature string `json:"signature"`
+}
+
 func (s *Server) handleUpdateProfile(c *gin.Context) (interface{}, error) {
-	return gin.H{"message": "update profile - TODO"}, nil
+	var req UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return nil, fmt.Errorf("invalid request: %w", err)
+	}
+
+	userID := middleware.GetUserIDFromGin(c)
+	ctx := c.Request.Context()
+
+	user, err := s.userDAO.FindByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("user not found")
+	}
+
+	// Update fields
+	if req.Nickname != "" {
+		user.Nickname = req.Nickname
+	}
+	if req.Signature != "" {
+		user.Signature = sql.NullString{String: req.Signature, Valid: true}
+	}
+
+	if err := s.userDAO.Update(ctx, user); err != nil {
+		return nil, fmt.Errorf("failed to update profile: %w", err)
+	}
+
+	return gin.H{"message": "profile updated successfully"}, nil
+}
+
+// ChangePasswordRequest represents a password change request
+type ChangePasswordRequest struct {
+	OldPassword string `json:"old_password" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=6"`
+}
+
+func (s *Server) handleChangePassword(c *gin.Context) (interface{}, error) {
+	var req ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return nil, fmt.Errorf("invalid request: %w", err)
+	}
+
+	userID := middleware.GetUserIDFromGin(c)
+	ctx := c.Request.Context()
+
+	user, err := s.userDAO.FindByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("user not found")
+	}
+
+	// Verify old password
+	if !dao.VerifyPassword(req.OldPassword, user.PasswordHash) {
+		return nil, fmt.Errorf("old password is incorrect")
+	}
+
+	// Hash new password
+	newHash, err := dao.HashPassword(req.NewPassword)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	// Update password
+	if err := s.userDAO.UpdatePassword(ctx, user.ID, newHash); err != nil {
+		return nil, fmt.Errorf("failed to update password: %w", err)
+	}
+
+	return gin.H{"message": "password changed successfully"}, nil
+}
+
+func (s *Server) handleUploadAvatar(c *gin.Context) (interface{}, error) {
+	userID := middleware.GetUserIDFromGin(c)
+	ctx := c.Request.Context()
+
+	// Get file from form
+	file, err := c.FormFile("avatar")
+	if err != nil {
+		return nil, fmt.Errorf("no file uploaded: %w", err)
+	}
+
+	// Open the uploaded file
+	src, err := file.Open()
+	if err != nil {
+		return nil, fmt.Errorf("failed to open uploaded file: %w", err)
+	}
+	defer src.Close()
+
+	// Validate file size (limit 2MB)
+	if file.Size > 2*1024*1024 {
+		return nil, fmt.Errorf("file size exceeds 2MB limit")
+	}
+
+	// Validate file type by extension
+	allowedTypes := map[string]bool{
+		".jpg":  true,
+		".jpeg": true,
+		".png":  true,
+		".gif":  true,
+		".webp": true,
+	}
+	ext := filepath.Ext(file.Filename)
+	if !allowedTypes[ext] {
+		return nil, fmt.Errorf("invalid file type, only jpg, jpeg, png, gif, webp are allowed")
+	}
+
+	// Create upload directory (relative path)
+	uploadDir := "./uploads/avatars"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create upload directory: %w", err)
+	}
+
+	// Generate unique filename
+	filename := fmt.Sprintf("avatar_%d_%d%s", userID, time.Now().Unix(), ext)
+	uploadPath := filepath.Join(uploadDir, filename)
+
+	// Create destination file
+	dst, err := os.Create(uploadPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create destination file: %w", err)
+	}
+	defer dst.Close()
+
+	// Copy file content
+	if _, err := io.Copy(dst, src); err != nil {
+		return nil, fmt.Errorf("failed to save file: %w", err)
+	}
+
+	// Generate avatar URL
+	avatarURL := fmt.Sprintf("/uploads/avatars/%s", filename)
+
+	// Update user avatar in database
+	if err := s.userDAO.UpdateAvatar(ctx, userID, avatarURL); err != nil {
+		return nil, fmt.Errorf("failed to update avatar: %w", err)
+	}
+
+	return gin.H{
+		"message":    "avatar uploaded successfully",
+		"avatar_url": avatarURL,
+	}, nil
 }
 
 func (s *Server) handleSearchUsers(c *gin.Context) (interface{}, error) {

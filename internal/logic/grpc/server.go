@@ -8,6 +8,7 @@ import (
 	pb "github.com/Terry-Mao/goim/api/logic"
 	"github.com/Terry-Mao/goim/internal/logic"
 	"github.com/Terry-Mao/goim/internal/logic/conf"
+	log "github.com/golang/glog"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -47,10 +48,13 @@ var _ pb.LogicServer = &server{}
 
 // Connect connect a conn.
 func (s *server) Connect(ctx context.Context, req *pb.ConnectReq) (*pb.ConnectReply, error) {
+	log.Infof("gRPC Connect called: server=%s cookie=%s token=%s", req.Server, req.Cookie, string(req.Token))
 	mid, key, room, accepts, hb, err := s.srv.Connect(ctx, req.Server, req.Cookie, req.Token)
 	if err != nil {
+		log.Errorf("gRPC Connect error: %v", err)
 		return &pb.ConnectReply{}, err
 	}
+	log.Infof("gRPC Connect success: mid=%d key=%s", mid, key)
 	return &pb.ConnectReply{Mid: mid, Key: key, RoomID: room, Accepts: accepts, Heartbeat: hb}, nil
 }
 

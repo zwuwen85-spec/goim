@@ -1,6 +1,8 @@
 package comet
 
 import (
+	"fmt"
+	"os"
 	"sync"
 
 	"github.com/Terry-Mao/goim/api/protocol"
@@ -36,11 +38,13 @@ func NewChannel(cli, svr int) *Channel {
 
 // Watch watch a operation.
 func (c *Channel) Watch(accepts ...int32) {
+	fmt.Fprintf(os.Stderr, "=== Channel Watch: accepts=%v ===\n", accepts)
 	c.mutex.Lock()
 	for _, op := range accepts {
 		c.watchOps[op] = struct{}{}
 	}
 	c.mutex.Unlock()
+	fmt.Fprintf(os.Stderr, "=== Channel Watch: watchOps now has %d items ===\n", len(c.watchOps))
 }
 
 // UnWatch unwatch an operation
@@ -65,9 +69,12 @@ func (c *Channel) NeedPush(op int32) bool {
 
 // Push server push message.
 func (c *Channel) Push(p *protocol.Proto) (err error) {
+	fmt.Fprintf(os.Stderr, "=== Channel Push: key=%s protoOp=%d bodyLen=%d ===\n", c.Key, p.Op, len(p.Body))
 	select {
 	case c.signal <- p:
+		fmt.Fprintf(os.Stderr, "=== Channel Push: SUCCESS sent to signal ===\n")
 	default:
+		fmt.Fprintf(os.Stderr, "=== Channel Push: FAILED signal full ===\n")
 		err = errors.ErrSignalFullMsgDropped
 	}
 	return

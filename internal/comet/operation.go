@@ -2,6 +2,8 @@ package comet
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/Terry-Mao/goim/api/logic"
@@ -15,14 +17,17 @@ import (
 
 // Connect connected a connection.
 func (s *Server) Connect(c context.Context, p *protocol.Proto, cookie string) (mid int64, key, rid string, accepts []int32, heartbeat time.Duration, err error) {
+	fmt.Fprintf(os.Stderr, "=== Comet Connect START: serverID=%s token=%s ===\n", s.serverID, string(p.Body))
 	reply, err := s.rpcClient.Connect(c, &logic.ConnectReq{
 		Server: s.serverID,
 		Cookie: cookie,
 		Token:  p.Body,
 	})
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "=== Comet Connect gRPC error: %v ===\n", err)
 		return
 	}
+	fmt.Fprintf(os.Stderr, "=== Comet Connect success: mid=%d key=%s roomID=%s ===\n", reply.Mid, reply.Key, reply.RoomID)
 	return reply.Mid, reply.Key, reply.RoomID, reply.Accepts, time.Duration(reply.Heartbeat), nil
 }
 

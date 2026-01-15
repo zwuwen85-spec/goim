@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Real-time Message Test</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #6366f1;
+        }
+        .users-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .user-panel {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 20px;
+            border: 2px solid #0f3460;
+        }
+        .user-panel h2 {
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #0f3460;
+        }
+        .user-1 h2 { color: #22d3ee; }
+        .user-2 h2 { color: #f472b6; }
+        .status {
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+        .status.connected { background: #059669; }
+        .status.disconnected { background: #dc2626; }
+        .login-section {
+            margin-bottom: 15px;
+        }
+        .login-section input {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+            border: 1px solid #0f3460;
+            border-radius: 6px;
+            background: #0f3460;
+            color: #eee;
+        }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 2px;
+        }
+        .btn-primary { background: #6366f1; color: white; }
+        .btn-success { background: #10b981; color: white; }
+        .btn-danger { background: #ef4444; color: white; }
+        .btn:hover { opacity: 0.8; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .message-section {
+            margin-top: 15px;
+        }
+        .message-section textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #0f3460;
+            border-radius: 6px;
+            background: #0f3460;
+            color: #eee;
+            min-height: 80px;
+            resize: vertical;
+        }
+        .messages {
+            margin-top: 15px;
+            height: 300px;
+            overflow-y: auto;
+            background: #0f3460;
+            border-radius: 6px;
+            padding: 10px;
+        }
+        .message {
+            margin: 8px 0;
+            padding: 8px 12px;
+            border-radius: 6px;
+            background: #1a1a2e;
+            border-left: 3px solid #6366f1;
+        }
+        .message.sent {
+            border-left-color: #10b981;
+        }
+        .message.received {
+            border-left-color: #f59e0b;
+        }
+        .message-meta {
+            font-size: 11px;
+            color: #888;
+            margin-top: 4px;
+        }
+        .online-users {
+            margin-top: 15px;
+            padding: 10px;
+            background: #0f3460;
+            border-radius: 6px;
+        }
+        .online-users h3 {
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        .user-chip {
+            display: inline-block;
+            padding: 4px 10px;
+            margin: 3px;
+            background: #1a1a2e;
+            border-radius: 15px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 WebSocket Real-time Message Sync Test</h1>
+
+        <div class="users-container">
+            <!-- User 1 Panel -->
+            <div class="user-panel user-1">
+                <h2>👤 User 1 (testuser)</h2>
+                <div id="status1" class="status disconnected">● Disconnected</div>
+
+                <div class="login-section">
+                    <input type="text" id="username1" value="testuser" placeholder="Username">
+                    <input type="password" id="password1" value="123456" placeholder="Password">
+                    <button class="btn btn-primary" onclick="loginUser1()">Login</button>
+                    <button class="btn btn-success" onclick="connectUser1()" id="connectBtn1" disabled>Connect WebSocket</button>
+                    <button class="btn btn-danger" onclick="disconnectUser1()" id="disconnectBtn1" disabled>Disconnect</button>
+                </div>
+
+                <div class="online-users">
+                    <h3>Online Friends:</h3>
+                    <div id="friends1"></div>
+                </div>
+
+                <div class="message-section">
+                    <textarea id="message1" placeholder="Type message to send to testuser2..."></textarea>
+                    <button class="btn btn-success" onclick="sendMessage1()" id="sendBtn1" disabled>Send to testuser2</button>
+                </div>
+
+                <div class="messages" id="messages1">
+                    <div style="color: #666; text-align: center;">No messages yet</div>
+                </div>
+            </div>
+
+            <!-- User 2 Panel -->
+            <div class="user-panel user-2">
+                <h2>👤 User 2 (testuser2)</h2>
+                <div id="status2" class="status disconnected">● Disconnected</div>
+
+                <div class="login-section">
+                    <input type="text" id="username2" value="testuser2" placeholder="Username">
+                    <input type="password" id="password2" value="password123" placeholder="Password">
+                    <button class="btn btn-primary" onclick="loginUser2()">Login</button>
+                    <button class="btn btn-success" onclick="connectUser2()" id="connectBtn2" disabled>Connect WebSocket</button>
+                    <button class="btn btn-danger" onclick="disconnectUser2()" id="disconnectBtn2" disabled>Disconnect</button>
+                </div>
+
+                <div class="online-users">
+                    <h3>Online Friends:</h3>
+                    <div id="friends2"></div>
+                </div>
+
+                <div class="message-section">
+                    <textarea id="message2" placeholder="Type message to send to testuser..."></textarea>
+                    <button class="btn btn-success" onclick="sendMessage2()" id="sendBtn2" disabled>Send to testuser</button>
+                </div>
+
+                <div class="messages" id="messages2">
+                    <div style="color: #666; text-align: center;">No messages yet</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3112/api';
+        const WS_URL = 'ws://localhost:3102/sub';
+
+        let user1 = { token: null, userId: null, ws: null, messages: [] };
+        let user2 = { token: null, userId: null, ws: null, messages: [] };
+
+        // Login function
+        async function login(username, password) {
+            const response = await fetch(`${API_BASE}/user/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            const data = await response.json();
+            if (data.code === 0) {
+                return { token: data.data.token, userId: data.data.user_id, nickname: data.data.nickname };
+            }
+            throw new Error(data.message);
+        }
+
+        // Get friends list
+        async function getFriends(token) {
+            const response = await fetch(`${API_BASE}/friend/list`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await response.json();
+            return data.code === 0 ? (data.data?.friends || []) : [];
+        }
+
+        // WebSocket connection
+        function connectWebSocket(token, userId, statusEl, messagesEl, messagesArray, sendBtn, userNum) {
+            const ws = new WebSocket(WS_URL);
+            const seq = 1;
+
+            ws.onopen = () => {
+                console.log(`User ${userNum} WebSocket connected`);
+                statusEl.textContent = '● Connected';
+                statusEl.className = 'status connected';
+
+                // Send auth
+                const authData = {
+                    mid: userId,
+                    key: `user_${userId}`,
+                    room_id: '',
+                    platform: 'web'
+                };
+                ws.send(encodeMessage(7, seq, JSON.stringify(authData)));
+            };
+
+            ws.onmessage = (event) => {
+                const msg = decodeMessage(event.data);
+                console.log(`User ${userNum} received:`, msg);
+
+                if (msg.op === 8) {
+                    // Auth success
+                    sendBtn.disabled = false;
+                    addSystemMessage(messagesEl, messagesArray, '✅ WebSocket authenticated successfully');
+                } else if (msg.op === 3) {
+                    // Heartbeat
+                } else if (msg.body) {
+                    try {
+                        const data = JSON.parse(msg.body);
+                        addMessage(messagesEl, messagesArray, data, userNum);
+                    } catch (e) {
+                        addSystemMessage(messagesEl, messagesArray, `Received: ${msg.body}`);
+                    }
+                }
+            };
+
+            ws.onclose = () => {
+                console.log(`User ${userNum} WebSocket disconnected`);
+                statusEl.textContent = '● Disconnected';
+                statusEl.className = 'status disconnected';
+                sendBtn.disabled = true;
+            };
+
+            ws.onerror = (error) => {
+                console.error(`User ${userNum} WebSocket error:`, error);
+                addSystemMessage(messagesEl, messagesArray, '❌ WebSocket error');
+            };
+
+            return ws;
+        }
+
+        // Protocol encoding
+        function encodeMessage(ver, op, seq, body) {
+            const payload = body ? new TextEncoder().encode(body) : new Uint8Array(0);
+            const packLen = 16 + payload.length;
+            const header = new DataView(new ArrayBuffer(16));
+            header.setUint32(0, packLen, true);
+            header.setUint16(4, 16, true);
+            header.setUint16(6, ver, true);
+            header.setInt32(8, op, true);
+            header.setInt32(12, seq, true);
+            const buffer = new Uint8Array(packLen);
+            buffer.set(new Uint8Array(header.buffer), 0);
+            if (payload.length > 0) {
+                buffer.set(payload, 16);
+            }
+            return buffer.buffer;
+        }
+
+        // Protocol decoding
+        function decodeMessage(buffer) {
+            const data = new DataView(buffer);
+            return {
+                packLen: data.getUint32(0, true),
+                headerLen: data.getUint16(4, true),
+                ver: data.getUint16(6, true),
+                op: data.getInt32(8, true),
+                seq: data.getInt32(12, true),
+                body: new TextDecoder().decode(buffer.slice(16))
+            };
+        }
+
+        // Add message to UI
+        function addMessage(messagesEl, messagesArray, msg, userNum) {
+            if (messagesArray.length === 0) {
+                messagesEl.innerHTML = '';
+            }
+            messagesArray.push(msg);
+
+            const div = document.createElement('div');
+            div.className = `message ${msg.from_user_id.toString() === (userNum === 1 ? '9002' : '9006') ? 'sent' : 'received'}`;
+            div.innerHTML = `
+                <div>${msg.content}</div>
+                <div class="message-meta">From: User ${msg.from_user_id} | Seq: ${msg.seq}</div>
+            `;
+            messagesEl.appendChild(div);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        function addSystemMessage(messagesEl, messagesArray, text) {
+            if (messagesArray.length === 0) {
+                messagesEl.innerHTML = '';
+            }
+            const div = document.createElement('div');
+            div.style.color = '#6366f1';
+            div.style.fontSize = '12px';
+            div.style.margin = '5px 0';
+            div.textContent = text;
+            messagesEl.appendChild(div);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        // User 1 functions
+        async function loginUser1() {
+            try {
+                const result = await login(document.getElementById('username1').value, document.getElementById('password1').value);
+                user1.token = result.token;
+                user1.userId = result.userId;
+                document.getElementById('connectBtn1').disabled = false;
+                addSystemMessage(document.getElementById('messages1'), user1.messages, `✅ Logged in as ${result.nickname} (ID: ${result.userId})`);
+
+                // Load friends
+                const friends = await getFriends(user1.token);
+                const friendsEl = document.getElementById('friends1');
+                if (friends.length > 0) {
+                    friendsEl.innerHTML = friends.map(f => `<span class="user-chip">${f.nickname || f.username}</span>`).join('');
+                } else {
+                    friendsEl.innerHTML = '<span style="color: #666;">No friends loaded</span>';
+                }
+            } catch (e) {
+                addSystemMessage(document.getElementById('messages1'), user1.messages, `❌ Login failed: ${e.message}`);
+            }
+        }
+
+        function connectUser1() {
+            user1.ws = connectWebSocket(
+                user1.token,
+                user1.userId,
+                document.getElementById('status1'),
+                document.getElementById('messages1'),
+                user1.messages,
+                document.getElementById('sendBtn1'),
+                1
+            );
+            document.getElementById('connectBtn1').disabled = true;
+            document.getElementById('disconnectBtn1').disabled = false;
+        }
+
+        function disconnectUser1() {
+            if (user1.ws) {
+                user1.ws.close();
+                user1.ws = null;
+            }
+            document.getElementById('connectBtn1').disabled = false;
+            document.getElementById('disconnectBtn1').disabled = true;
+            document.getElementById('sendBtn1').disabled = true;
+        }
+
+        async function sendMessage1() {
+            const content = document.getElementById('message1').value.trim();
+            if (!content) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/message/send`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${user1.token}`
+                    },
+                    body: JSON.stringify({
+                        to_user_id: 9006,
+                        conversation_type: 1,
+                        msg_type: 1,
+                        content
+                    })
+                });
+                const data = await response.json();
+                if (data.code === 0) {
+                    document.getElementById('message1').value = '';
+                    addSystemMessage(document.getElementById('messages1'), user1.messages, '✅ Message sent via API');
+                } else {
+                    addSystemMessage(document.getElementById('messages1'), user1.messages, `❌ Send failed: ${data.message}`);
+                }
+            } catch (e) {
+                addSystemMessage(document.getElementById('messages1'), user1.messages, `❌ Send error: ${e.message}`);
+            }
+        }
+
+        // User 2 functions
+        async function loginUser2() {
+            try {
+                const result = await login(document.getElementById('username2').value, document.getElementById('password2').value);
+                user2.token = result.token;
+                user2.userId = result.userId;
+                document.getElementById('connectBtn2').disabled = false;
+                addSystemMessage(document.getElementById('messages2'), user2.messages, `✅ Logged in as ${result.nickname} (ID: ${result.userId})`);
+
+                // Load friends
+                const friends = await getFriends(user2.token);
+                const friendsEl = document.getElementById('friends2');
+                if (friends.length > 0) {
+                    friendsEl.innerHTML = friends.map(f => `<span class="user-chip">${f.nickname || f.username}</span>`).join('');
+                } else {
+                    friendsEl.innerHTML = '<span style="color: #666;">No friends loaded</span>';
+                }
+            } catch (e) {
+                addSystemMessage(document.getElementById('messages2'), user2.messages, `❌ Login failed: ${e.message}`);
+            }
+        }
+
+        function connectUser2() {
+            user2.ws = connectWebSocket(
+                user2.token,
+                user2.userId,
+                document.getElementById('status2'),
+                document.getElementById('messages2'),
+                user2.messages,
+                document.getElementById('sendBtn2'),
+                2
+            );
+            document.getElementById('connectBtn2').disabled = true;
+            document.getElementById('disconnectBtn2').disabled = false;
+        }
+
+        function disconnectUser2() {
+            if (user2.ws) {
+                user2.ws.close();
+                user2.ws = null;
+            }
+            document.getElementById('connectBtn2').disabled = false;
+            document.getElementById('disconnectBtn2').disabled = true;
+            document.getElementById('sendBtn2').disabled = true;
+        }
+
+        async function sendMessage2() {
+            const content = document.getElementById('message2').value.trim();
+            if (!content) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/message/send`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${user2.token}`
+                    },
+                    body: JSON.stringify({
+                        to_user_id: 9002,
+                        conversation_type: 1,
+                        msg_type: 1,
+                        content
+                    })
+                });
+                const data = await response.json();
+                if (data.code === 0) {
+                    document.getElementById('message2').value = '';
+                    addSystemMessage(document.getElementById('messages2'), user2.messages, '✅ Message sent via API');
+                } else {
+                    addSystemMessage(document.getElementById('messages2'), user2.messages, `❌ Send failed: ${data.message}`);
+                }
+            } catch (e) {
+                addSystemMessage(document.getElementById('messages2'), user2.messages, `❌ Send error: ${e.message}`);
+            }
+        }
+    </script>
+</body>
+</html>

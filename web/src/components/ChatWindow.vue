@@ -26,7 +26,7 @@
       <template v-else>
         <div
           v-for="(msg, index) in messages"
-          :key="msg.id || index"
+          :key="msg.msg_id || msg.id || index"
           :id="'msg-' + (msg.msg_id || msg.id)"
           class="message-wrapper"
           :class="{ 'is-me': isMe(msg) }"
@@ -137,7 +137,10 @@ const handleScroll = () => {
 }
 
 const isMe = (msg: any) => {
-  return msg.from_user_id === props.currentUserId || msg.role === 'user'
+  // If role is 'user', it's usually AI chat from user
+  if (msg.role === 'user') return true
+  // Standard check
+  return msg.from_user_id === props.currentUserId
 }
 
 const parseContent = (content: any) => {

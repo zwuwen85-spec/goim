@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -24,12 +25,16 @@ func main() {
 		panic(err)
 	}
 	log.Infof("goim-job [version: %s env: %+v] start", ver, conf.Conf.Env)
+	fmt.Fprintf(os.Stderr, "=== JOB MAIN: About to create discovery and register resolver ===\n")
 	// grpc register naming
 	dis := naming.New(conf.Conf.Discovery)
 	resolver.Register(dis)
+	fmt.Fprintf(os.Stderr, "=== JOB MAIN: About to call job.New() ===\n")
 	// job
 	j := job.New(conf.Conf)
+	fmt.Fprintf(os.Stderr, "=== JOB MAIN: job.New() returned, about to start Consume goroutine ===\n")
 	go j.Consume()
+	fmt.Fprintf(os.Stderr, "=== JOB MAIN: Consume goroutine started, entering signal loop ===\n")
 	// signal
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)

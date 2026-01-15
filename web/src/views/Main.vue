@@ -45,7 +45,7 @@
 
       <div class="bottom-actions">
         <el-dropdown trigger="click" placement="right-end">
-          <el-avatar :size="40" :src="userStore.currentUser?.avatar" class="user-avatar">
+          <el-avatar :size="40" :src="userStore.currentUser?.avatar" :key="userStore.currentUser?.avatar" class="user-avatar">
             {{ userStore.currentUser?.nickname?.[0] }}
           </el-avatar>
           <template #dropdown>
@@ -54,7 +54,10 @@
                 <div class="dropdown-name">{{ userStore.currentUser?.nickname }}</div>
                 <div class="dropdown-status">在线</div>
               </div>
-              <el-dropdown-item divided @click="handleLogout">
+              <el-dropdown-item divided @click="router.push('/settings')">
+                <el-icon><Setting /></el-icon>设置
+              </el-dropdown-item>
+              <el-dropdown-item @click="handleLogout">
                 <el-icon><SwitchButton /></el-icon>退出登录
               </el-dropdown-item>
             </el-dropdown-menu>
@@ -172,9 +175,9 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
-import { 
-  ChatLineRound, User, Connection, Cpu, 
-  SwitchButton, ChatDotRound, MoreFilled, Delete 
+import {
+  ChatLineRound, User, Connection, Cpu,
+  SwitchButton, ChatDotRound, MoreFilled, Delete, Setting
 } from '@element-plus/icons-vue'
 
 import { useUserStore } from '../store/user'
@@ -339,7 +342,7 @@ const handleFriendChat = (friend: any) => {
   }
 
   activeSessionType.value = 'private'
-  chatStore.openChat(userId, 1, friend.remark || friend.friend_user?.nickname)
+  chatStore.openChat(userId, 1, friend.remark || friend.friend_user?.nickname, parseSqlNullString(friend.friend_user?.avatar))
   activeTab.value = 'chats' // Switch to chat tab
 
   console.log('after handleFriendChat, activeSessionType:', activeSessionType.value, 'showGroupSidebar:', showGroupSidebar.value)
@@ -356,7 +359,7 @@ const handleGroupSelect = async (group: any) => {
 
   activeSessionType.value = 'group'
   await groupStore.setCurrentGroup(group)
-  chatStore.openChat(group.id, 2, group.name)
+  chatStore.openChat(group.id, 2, group.name, parseSqlNullString(group.avatar))
   await loadGroupMembers(group.id)
   activeTab.value = 'chats' // Switch to chat tab to show conversation list
 
@@ -420,8 +423,14 @@ const handleLogout = async () => {
       confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning'
     })
     disconnect()
+    
+    // Clear chat store explicitly
+    chatStore.clearAll()
+    
     userStore.logout()
-    router.push('/login')
+    
+    // Force reload to clear all memory state absolutely
+    window.location.href = '/login'
   } catch {}
 }
 
@@ -497,6 +506,15 @@ const getSenderStyle = (msg: any) => {
 onMounted(async () => {
   if (!userStore.isLoggedIn) return
   
+  // Ensure we load sessions for the current user if not already loaded correctly
+  // This is a safety check in case page was refreshed or store was reset
+  // But be careful not to load if we already have data for *this* user
+  // The store doesn't track *which* user the data belongs to easily, 
+  // but if it's empty, we definitely need to load.
+  if (chatStore.conversations.length === 0) {
+      chatStore.loadSessionsFromStorage()
+  }
+
   await Promise.all([
     chatStore.loadConversations(),
     chatStore.loadFriends(),
@@ -513,31 +531,34 @@ onMounted(async () => {
 
   // Restore UI state
   try {
-    const stored = localStorage.getItem('app_state')
-    if (stored) {
-      const state = JSON.parse(stored)
-      if (state.activeTab) activeTab.value = state.activeTab
-      
-      if (state.activeSessionType && state.currentSessionId) {
-        if (state.activeSessionType === 'ai') {
-          await aiStore.loadBots()
-          const bot = aiStore.getBotById(state.currentSessionId)
-          if (bot) {
-             aiStore.setCurrentBot(bot)
-             activeSessionType.value = 'ai'
+    const userId = userStore.currentUser?.id
+    if (userId) {
+      const stored = localStorage.getItem(`app_state_${userId}`)
+      if (stored) {
+        const state = JSON.parse(stored)
+        if (state.activeTab) activeTab.value = state.activeTab
+        
+        if (state.activeSessionType && state.currentSessionId) {
+          if (state.activeSessionType === 'ai') {
+            await aiStore.loadBots()
+            const bot = aiStore.getBotById(state.currentSessionId)
+            if (bot) {
+               aiStore.setCurrentBot(bot)
+               activeSessionType.value = 'ai'
+            }
+          } else if (state.activeSessionType === 'group') {
+             await groupStore.loadGroups()
+             const group = groupStore.getGroupById(state.currentSessionId)
+             if (group) {
+               await groupStore.setCurrentGroup(group)
+               chatStore.openChat(group.id, 2, group.name)
+               activeSessionType.value = 'group'
+               await loadGroupMembers(group.id)
+             }
+          } else if (state.activeSessionType === 'private') {
+             chatStore.openChat(state.currentSessionId, 1, state.currentSessionName, state.currentSessionAvatar)
+             activeSessionType.value = 'private'
           }
-        } else if (state.activeSessionType === 'group') {
-           await groupStore.loadGroups()
-           const group = groupStore.getGroupById(state.currentSessionId)
-           if (group) {
-             await groupStore.setCurrentGroup(group)
-             chatStore.openChat(group.id, 2, group.name)
-             activeSessionType.value = 'group'
-             await loadGroupMembers(group.id)
-           }
-        } else if (state.activeSessionType === 'private') {
-           chatStore.openChat(state.currentSessionId, 1, state.currentSessionName, state.currentSessionAvatar)
-           activeSessionType.value = 'private'
         }
       }
     }
@@ -549,6 +570,9 @@ onMounted(async () => {
 // Persistence state
 const saveState = () => {
   try {
+    const userId = userStore.currentUser?.id
+    if (!userId) return
+
     const state = {
       activeTab: activeTab.value,
       activeSessionType: activeSessionType.value,
@@ -562,7 +586,7 @@ const saveState = () => {
                             activeSessionType.value === 'group' ? undefined :
                             chatStore.currentSession?.avatar
     }
-    localStorage.setItem('app_state', JSON.stringify(state))
+    localStorage.setItem(`app_state_${userId}`, JSON.stringify(state))
   } catch (e) {
     console.error('Failed to save state', e)
   }
@@ -588,23 +612,33 @@ watch(activeSessionType, (newType, oldType) => {
 })
 
 // Watch WS messages
+const processedMsgCount = ref(0)
 watch(wsMessages, (newMessages) => {
-  if (newMessages.length > 0) {
-    const latestMsg = newMessages[newMessages.length - 1]
-    if (latestMsg.conversation_type === 1 || latestMsg.conversation_type === 2) {
-      // Convert WS message to Store Message
-      chatStore.addMessage({
-        id: Date.now(), // Generate a temporary ID
-        msg_id: latestMsg.msg_id,
-        from_user_id: latestMsg.from_user_id,
-        conversation_id: latestMsg.conversation_id,
-        conversation_type: latestMsg.conversation_type,
-        msg_type: latestMsg.msg_type,
-        content: latestMsg.content,
-        seq: latestMsg.seq,
-        created_at: new Date(latestMsg.created_at).toISOString()
-      })
+  if (newMessages.length > processedMsgCount.value) {
+    const start = processedMsgCount.value
+    const end = newMessages.length
+    
+    for (let i = start; i < end; i++) {
+      const latestMsg = newMessages[i]
+      if (latestMsg.conversation_type === 1 || latestMsg.conversation_type === 2) {
+        // Convert WS message to Store Message
+        const msg = {
+          id: Date.now() + i, // Generate a temporary ID (add i to ensure uniqueness in same tick)
+          msg_id: latestMsg.msg_id,
+          from_user_id: latestMsg.from_user_id,
+          conversation_id: Number(latestMsg.conversation_id),
+          conversation_type: Number(latestMsg.conversation_type),
+          msg_type: Number(latestMsg.msg_type),
+          content: latestMsg.content,
+          seq: latestMsg.seq,
+          created_at: new Date(latestMsg.created_at).toISOString()
+        }
+        // Determine if this message is from self
+        const isFromSelf = latestMsg.from_user_id === userStore.currentUser?.id
+        chatStore.addMessage(msg, isFromSelf)
+      }
     }
+    processedMsgCount.value = end
   }
 })
 

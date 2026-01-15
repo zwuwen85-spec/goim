@@ -10,6 +10,13 @@ export const useAIStore = defineStore('ai', () => {
   const loading = ref(false)
   const sending = ref(false)
 
+  // Clear all data (for account switching)
+  const clearAll = () => {
+    currentBot.value = null
+    messages.value = {}
+    localStorage.removeItem('ai_messages')
+  }
+
   // Load available AI bots
   const loadBots = async () => {
     try {
@@ -224,8 +231,8 @@ export const useAIStore = defineStore('ai', () => {
   }
 
   // Initialize
-  loadBots()
-  loadMessagesFromStorage()
+  // loadBots()
+  // loadMessagesFromStorage()
 
   // Get default bots (system bots)
   const defaultBots = ref<AIBot[]>([
@@ -246,6 +253,7 @@ export const useAIStore = defineStore('ai', () => {
     messages,
     loading,
     sending,
+    clearAll,
     defaultBots,
     loadBots,
     getBotMessages,
@@ -254,6 +262,7 @@ export const useAIStore = defineStore('ai', () => {
     clearMessages,
     clearAllMessages,
     getBotById,
-    loadMoreMessages
+    loadMoreMessages,
+    loadMessagesFromStorage
   }
 })

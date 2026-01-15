@@ -3,8 +3,10 @@ package comet
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -318,6 +320,7 @@ func (s *Server) dispatchWebsocket(ws *websocket.Conn, wp *bytes.Pool, wb *bytes
 			whitelist.Printf("key: %s wait proto ready\n", ch.Key)
 		}
 		var p = ch.Ready()
+		fmt.Fprintf(os.Stderr, "=== dispatch: key=%s got proto op=%d bodyLen=%d ===\n", ch.Key, p.Op, len(p.Body))
 		if white {
 			whitelist.Printf("key: %s proto ready\n", ch.Key)
 		}
@@ -326,6 +329,7 @@ func (s *Server) dispatchWebsocket(ws *websocket.Conn, wp *bytes.Pool, wb *bytes
 		}
 		switch p {
 		case protocol.ProtoFinish:
+			fmt.Fprintf(os.Stderr, "=== dispatch: ProtoFinish ===\n")
 			if white {
 				whitelist.Printf("key: %s receive proto finish\n", ch.Key)
 			}
@@ -335,11 +339,13 @@ func (s *Server) dispatchWebsocket(ws *websocket.Conn, wp *bytes.Pool, wb *bytes
 			finish = true
 			goto failed
 		case protocol.ProtoReady:
+			fmt.Fprintf(os.Stderr, "=== dispatch: ProtoReady ===\n")
 			// fetch message from svrbox(client send)
 			for {
 				if p, err = ch.CliProto.Get(); err != nil {
 					break
 				}
+				fmt.Fprintf(os.Stderr, "=== dispatch: client proto op=%d ===\n", p.Op)
 				if white {
 					whitelist.Printf("key: %s start write client proto%v\n", ch.Key, p)
 				}
@@ -354,6 +360,7 @@ func (s *Server) dispatchWebsocket(ws *websocket.Conn, wp *bytes.Pool, wb *bytes
 					if err = p.WriteWebsocket(ws); err != nil {
 						goto failed
 					}
+					fmt.Fprintf(os.Stderr, "=== dispatch: WROTE client proto to WebSocket ===\n")
 				}
 				if white {
 					whitelist.Printf("key: %s write client proto%v\n", ch.Key, p)
@@ -362,12 +369,15 @@ func (s *Server) dispatchWebsocket(ws *websocket.Conn, wp *bytes.Pool, wb *bytes
 				ch.CliProto.GetAdv()
 			}
 		default:
+			fmt.Fprintf(os.Stderr, "=== dispatch: SERVER proto op=%d, writing to WebSocket ===\n", p.Op)
 			if white {
 				whitelist.Printf("key: %s start write server proto%v\n", ch.Key, p)
 			}
 			if err = p.WriteWebsocket(ws); err != nil {
+				fmt.Fprintf(os.Stderr, "=== dispatch: WriteWebsocket ERROR: %v ===\n", err)
 				goto failed
 			}
+			fmt.Fprintf(os.Stderr, "=== dispatch: WROTE server proto to WebSocket ===\n")
 			if white {
 				whitelist.Printf("key: %s write server proto%v\n", ch.Key, p)
 			}
@@ -406,24 +416,32 @@ failed:
 
 // auth for goim handshake with client, use rsa & aes.
 func (s *Server) authWebsocket(ctx context.Context, ws *websocket.Conn, p *protocol.Proto, cookie string) (mid int64, key, rid string, accepts []int32, hb time.Duration, err error) {
+	fmt.Fprintf(os.Stderr, "=== authWebsocket START ===\n")
 	for {
 		if err = p.ReadWebsocket(ws); err != nil {
+			fmt.Fprintf(os.Stderr, "=== ReadWebsocket error: %v ===\n", err)
 			return
 		}
+		fmt.Fprintf(os.Stderr, "=== Read proto op=%d ver=%d body=%s ===\n", p.Op, p.Ver, string(p.Body))
 		if p.Op == protocol.OpAuth {
 			break
 		} else {
-			log.Errorf("ws request operation(%d) not auth", p.Op)
+			fmt.Fprintf(os.Stderr, "=== ws request operation(%d) not auth ===\n", p.Op)
 		}
 	}
+	fmt.Fprintf(os.Stderr, "=== calling s.Connect ===\n")
 	if mid, key, rid, accepts, hb, err = s.Connect(ctx, p, cookie); err != nil {
+		fmt.Fprintf(os.Stderr, "=== s.Connect error: %v ===\n", err)
 		return
 	}
+	fmt.Fprintf(os.Stderr, "=== auth success mid=%d key=%s rid=%s accepts=%v ===\n", mid, key, rid, accepts)
 	p.Op = protocol.OpAuthReply
 	p.Body = nil
 	if err = p.WriteWebsocket(ws); err != nil {
+		fmt.Fprintf(os.Stderr, "=== WriteWebsocket error: %v ===\n", err)
 		return
 	}
 	err = ws.Flush()
+	fmt.Fprintf(os.Stderr, "=== authWebsocket END ===\n")
 	return
 }

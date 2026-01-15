@@ -82,6 +82,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { User, Lock } from '@element-plus/icons-vue'
 import { useUserStore } from '../store/user'
+import { useChatStore } from '../store/chat'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -111,8 +112,19 @@ const handleLogin = async () => {
 
     loading.value = true
     try {
+      // Clear any existing chat state first
+      const chatStore = useChatStore()
+      chatStore.clearAll()
+
       await userStore.login(form.username, form.password)
       ElMessage.success('登录成功')
+
+      // Wait a tick to ensure store is reset before loading new user data
+      // Although userStore.login is async, extra safety
+      
+      // Explicitly load new user's sessions using the NEW user ID
+      await chatStore.loadSessionsFromStorage()
+
       router.push('/')
     } catch (error: any) {
       ElMessage.error(error.message || '登录失败')

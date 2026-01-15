@@ -16,7 +16,7 @@ export interface ApiResponse<T = any> {
 // Request interceptor to add auth token
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token')
+    const token = sessionStorage.getItem('token')
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
@@ -34,9 +34,13 @@ api.interceptors.response.use(
   },
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('user')
-      window.location.href = '/login'
+      sessionStorage.removeItem('token')
+      sessionStorage.removeItem('user')
+      
+      // Force reload if not on login page
+      if (!window.location.pathname.includes('/login')) {
+        window.location.href = '/login'
+      }
     }
     return Promise.reject(error.response?.data || error.message)
   }
@@ -160,6 +164,20 @@ export const authApi = {
     api.post('/user/login', data),
 
   getProfile: () => api.get('/user/profile'),
+
+  updateProfile: (data: { nickname?: string; signature?: string }) =>
+    api.put('/user/profile', data),
+
+  uploadAvatar: (file: File) => {
+    const formData = new FormData()
+    formData.append('avatar', file)
+    return api.post('/user/avatar', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
+
+  changePassword: (data: { old_password: string; new_password: string }) =>
+    api.put('/user/password', data),
 
   searchUsers: (keyword: string) => api.get('/user/search', { params: { keyword } })
 }

@@ -2,6 +2,8 @@ package logic
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/Terry-Mao/goim/internal/logic/model"
 
@@ -10,22 +12,30 @@ import (
 
 // PushKeys push a message by keys.
 func (l *Logic) PushKeys(c context.Context, op int32, keys []string, msg []byte) (err error) {
+	fmt.Fprintf(os.Stderr, "=== LOGIC PushKeys START: op=%d keys=%v msg_len=%d ===\n", op, keys, len(msg))
 	servers, err := l.dao.ServersByKeys(c, keys)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "=== LOGIC PushKeys ServersByKeys ERROR: %v ===\n", err)
 		return
 	}
+	fmt.Fprintf(os.Stderr, "=== LOGIC PushKeys servers: %v ===\n", servers)
 	pushKeys := make(map[string][]string)
 	for i, key := range keys {
 		server := servers[i]
+		fmt.Fprintf(os.Stderr, "=== LOGIC PushKeys key[%d]=%s server=%s ===\n", i, key, server)
 		if server != "" && key != "" {
 			pushKeys[server] = append(pushKeys[server], key)
 		}
 	}
-	for server := range pushKeys {
-		if err = l.dao.PushMsg(c, op, server, pushKeys[server], msg); err != nil {
+	fmt.Fprintf(os.Stderr, "=== LOGIC PushKeys pushKeys map: %+v ===\n", pushKeys)
+	for server, serverKeys := range pushKeys {
+		fmt.Fprintf(os.Stderr, "=== LOGIC PushKeys calling PushMsg: server=%s keys=%v ===\n", server, serverKeys)
+		if err = l.dao.PushMsg(c, op, server, serverKeys, msg); err != nil {
+			fmt.Fprintf(os.Stderr, "=== LOGIC PushKeys PushMsg ERROR: %v ===\n", err)
 			return
 		}
 	}
+	fmt.Fprintf(os.Stderr, "=== LOGIC PushKeys SUCCESS ===\n")
 	return
 }
 
