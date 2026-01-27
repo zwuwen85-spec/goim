@@ -249,6 +249,14 @@ export const groupApi = {
   update: (id: number, data: { name?: string }) =>
     api.put(`/group/info/${id}`, data),
 
+  uploadAvatar: (id: number, file: File) => {
+    const formData = new FormData()
+    formData.append('avatar', file)
+    return api.post(`/group/avatar/${id}`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
+
   // New: invite, kick, manage members
   invite: (id: number, data: { user_id: number; role?: number }) =>
     api.post(`/group/invite/${id}`, data),

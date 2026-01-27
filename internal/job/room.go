@@ -76,8 +76,11 @@ func (r *Room) pushproc(batch int, sigTime time.Duration) {
 		if p = <-r.proto; p == nil {
 			break // exit
 		} else if p != roomReadyProto {
-			// merge buffer ignore error, always nil
-			p.WriteTo(buf)
+			// merge buffer: only write the body, not the full proto header
+			// The proto headers will be added by broadcastRoomRawBytes
+			if p.Body != nil {
+				buf.Write(p.Body)
+			}
 			if n++; n == 1 {
 				last = time.Now()
 				td.Reset(sigTime)

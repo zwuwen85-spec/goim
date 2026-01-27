@@ -11,7 +11,8 @@ import (
 type Room struct {
 	ID        string
 	rLock     sync.RWMutex
-	next      *Channel
+	channels  map[*Channel]struct{} // Use map for multi-room support
+	next      *Channel              // Kept for backwards compatibility
 	drop      bool
 	Online    int32 // dirty read is ok
 	AllOnline int32
@@ -22,6 +23,7 @@ func NewRoom(id string) (r *Room) {
 	r = new(Room)
 	r.ID = id
 	r.drop = false
+	r.channels = make(map[*Channel]struct{})
 	r.next = nil
 	r.Online = 0
 	return
@@ -31,13 +33,14 @@ func NewRoom(id string) (r *Room) {
 func (r *Room) Put(ch *Channel) (err error) {
 	r.rLock.Lock()
 	if !r.drop {
-		if r.next != nil {
-			r.next.Prev = ch
+		// Check if already in room
+		if _, exists := r.channels[ch]; !exists {
+			r.channels[ch] = struct{}{}
+			// Update backwards compatible linked list
+			ch.Next = r.next
+			r.next = ch
+			r.Online++
 		}
-		ch.Next = r.next
-		ch.Prev = nil
-		r.next = ch // insert to header
-		r.Online++
 	} else {
 		err = errors.ErrRoomDroped
 	}
@@ -48,19 +51,26 @@ func (r *Room) Put(ch *Channel) (err error) {
 // Del delete channel from the room.
 func (r *Room) Del(ch *Channel) bool {
 	r.rLock.Lock()
-	if ch.Next != nil {
-		// if not footer
-		ch.Next.Prev = ch.Prev
+	if _, exists := r.channels[ch]; exists {
+		delete(r.channels, ch)
+		// Update linked list for backwards compatibility
+		// Rebuild the linked list without this channel
+		var prev *Channel
+		var curr *Channel
+		for curr = r.next; curr != nil; curr = curr.Next {
+			if curr == ch {
+				if prev != nil {
+					prev.Next = curr.Next
+				} else {
+					r.next = curr.Next
+				}
+				curr.Next = nil
+				break
+			}
+			prev = curr
+		}
+		r.Online--
 	}
-	if ch.Prev != nil {
-		// if not header
-		ch.Prev.Next = ch.Next
-	} else {
-		r.next = ch.Next
-	}
-	ch.Next = nil
-	ch.Prev = nil
-	r.Online--
 	r.drop = r.Online == 0
 	r.rLock.Unlock()
 	return r.drop
@@ -69,7 +79,7 @@ func (r *Room) Del(ch *Channel) bool {
 // Push push msg to the room, if chan full discard it.
 func (r *Room) Push(p *protocol.Proto) {
 	r.rLock.RLock()
-	for ch := r.next; ch != nil; ch = ch.Next {
+	for ch := range r.channels {
 		_ = ch.Push(p)
 	}
 	r.rLock.RUnlock()
@@ -78,7 +88,7 @@ func (r *Room) Push(p *protocol.Proto) {
 // Close close the room.
 func (r *Room) Close() {
 	r.rLock.RLock()
-	for ch := r.next; ch != nil; ch = ch.Next {
+	for ch := range r.channels {
 		ch.Close()
 	}
 	r.rLock.RUnlock()

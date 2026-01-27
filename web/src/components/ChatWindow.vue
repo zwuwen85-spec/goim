@@ -26,7 +26,7 @@
       <template v-else>
         <div
           v-for="(msg, index) in messages"
-          :key="msg.msg_id || msg.id || index"
+          :key="(msg.msg_id || msg.id || index) + '-' + membersRefreshKey"
           :id="'msg-' + (msg.msg_id || msg.id)"
           class="message-wrapper"
           :class="{ 'is-me': isMe(msg) }"
@@ -36,11 +36,13 @@
           </div>
           
           <div class="message-row">
-            <el-avatar 
-              class="message-avatar" 
-              :size="36" 
-              :src="getSenderAvatar(msg)" 
+            <el-avatar
+              class="message-avatar"
+              :size="36"
+              :src="getSenderAvatar(msg)"
               :style="getSenderStyle(msg)"
+              @click="handleAvatarClick(msg)"
+              :class="{ 'clickable': !isMe(msg) }"
             >
               {{ getSenderName(msg)?.[0] || '?' }}
             </el-avatar>
@@ -101,7 +103,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch, onMounted } from 'vue'
+import { ref, nextTick, watch, onMounted, computed } from 'vue'
 import { UserFilled, Picture, Files } from '@element-plus/icons-vue'
 import { parseSqlNullString } from '../utils/format'
 
@@ -121,17 +123,19 @@ const props = defineProps<{
   getSenderStyle?: (msg: any) => any
 }>()
 
-const emit = defineEmits(['send', 'load-more'])
+const emit = defineEmits(['send', 'load-more', 'avatar-click'])
 
 const inputValue = ref('')
 const messagesRef = ref<HTMLElement>()
 const firstMsgId = ref<string | number | null>(null)
+const membersRefreshKey = computed(() => props.messages && Array.isArray(props.messages) ? (props.messages as any)._version || 0 : 0)
 
 const handleScroll = () => {
   if (!messagesRef.value || props.loading) return
-  if (props.hasMore === false) return // Don't load if no more
-  
-  if (messagesRef.value.scrollTop < 20 && props.messages.length > 0) {
+  const el = messagesRef.value
+
+  // Load more when scrolling to top
+  if (props.hasMore !== false && el.scrollTop < 20 && props.messages.length > 0) {
     emit('load-more')
   }
 }
@@ -173,6 +177,14 @@ const handleSend = () => {
   inputValue.value = ''
 }
 
+const handleAvatarClick = (msg: any) => {
+  // Don't emit for own messages
+  if (isMe(msg)) return
+
+  // Emit the user id from the message
+  emit('avatar-click', msg.from_user_id)
+}
+
 const scrollToBottom = () => {
   nextTick(() => {
     if (messagesRef.value) {
@@ -197,23 +209,23 @@ const scrollToMessage = (messageId: string | number) => {
 
 watch(() => props.messages, async (newMsgs) => {
   if (!messagesRef.value) return
-  
+
   const el = messagesRef.value
   const oldHeight = el.scrollHeight
   const oldTop = el.scrollTop
   // Check if was at bottom (allow some slack)
   const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50
-  
+
   const newFirstId = newMsgs.length > 0 ? (newMsgs[0].msg_id || newMsgs[0].id) : null
   const isPrepend = firstMsgId.value !== null && newFirstId !== null && newFirstId !== firstMsgId.value
-  
+
   firstMsgId.value = newFirstId
-  
+
   await nextTick()
-  
+
   if (wasAtBottom) {
     el.scrollTop = el.scrollHeight
-  } 
+  }
   // else if (isPrepend && oldTop < 50) {
   //   // Browser scroll anchoring should handle this now
   //   // el.scrollTop = el.scrollHeight - oldHeight + oldTop
@@ -333,6 +345,16 @@ const getSenderStyle = props.getSenderStyle || defaultGetSenderStyle
 
 .message-avatar {
   flex-shrink: 0;
+}
+
+.message-avatar.clickable {
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.message-avatar.clickable:hover {
+  transform: scale(1.05);
+  opacity: 0.8;
 }
 
 .message-row {

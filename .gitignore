@@ -26,3 +26,15 @@ Thumbs.db
 /target
 /configs
 /dist
+
+# logs
+logs/
+*.pid
+
+# binaries
+bin/
+
+# test files
+test_*.js
+test_*.html
+debug_*.html

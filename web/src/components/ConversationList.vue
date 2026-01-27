@@ -49,13 +49,19 @@ const currentConvId = computed(() => {
 })
 
 const getName = (conv: any) => {
-  // 1. Try to get from target_user (if populated by API)
+  // 1. Try to get from conversation name first (for both private and group)
+  if (conv.name) {
+    const name = parseSqlNullString(conv.name)
+    if (name) return name
+  }
+
+  // 2. Try to get from target_user (if populated by API)
   const directName = parseSqlNullString(conv.target_user?.nickname)
   if (directName) return directName
 
-  // 2. If private chat (type 1), look up in friends list
+  // 3. If private chat (type 1), look up in friends list
   if (conv.conversation_type === 1) {
-    const friend = chatStore.friends.find(f => 
+    const friend = chatStore.friends.find(f =>
       (f.friend_user?.id === conv.target_id) || (f.friend_id === conv.target_id)
     )
     if (friend) {
@@ -63,14 +69,14 @@ const getName = (conv: any) => {
     }
   }
 
-  // 3. If group chat (type 2), look up in group store
+  // 4. If group chat (type 2), look up in group store as fallback
   if (conv.conversation_type === 2) {
     const group = groupStore.getGroupById(conv.target_id)
     if (group) return group.name
     return `Group ${conv.target_id}`
   }
 
-  // 4. If AI chat (type 3)
+  // 5. If AI chat (type 3)
   if (conv.conversation_type === 3) {
     // If target_user is faked, it might have nickname
     if (conv.target_user?.nickname) return conv.target_user.nickname
@@ -86,11 +92,23 @@ const getAvatar = (conv: any) => {
     return userStore.currentUser.avatar
   }
 
-  // 2. Try to get from target_user
+  // 2. Try to get from conversation avatar first (for both private and group)
+  if (conv.avatar) {
+    const avatar = parseSqlNullString(conv.avatar)
+    if (avatar) {
+      // Handle relative path for uploaded files
+      if (avatar.startsWith('/uploads/')) {
+        return window.location.origin + avatar
+      }
+      return avatar
+    }
+  }
+
+  // 3. Try to get from target_user
   const directAvatar = parseSqlNullString(conv.target_user?.avatar)
   if (directAvatar) return directAvatar
 
-  // 3. If private chat, look up in friends list
+  // 4. If private chat, look up in friends list
   if (conv.conversation_type === 1) {
     const friend = chatStore.friends.find(f =>
       (f.friend_user?.id === conv.target_id) || (f.friend_id === conv.target_id)
@@ -100,10 +118,19 @@ const getAvatar = (conv: any) => {
     }
   }
 
-  // 4. If group chat, look up in group store
+  // 5. If group chat, look up in group store as fallback
   if (conv.conversation_type === 2) {
     const group = groupStore.getGroupById(conv.target_id)
-    if (group) return parseSqlNullString(group.avatar)
+    if (group) {
+      const avatar = parseSqlNullString(group.avatar)
+      if (avatar) {
+        // Handle relative path for uploaded files
+        if (avatar.startsWith('/uploads/')) {
+          return window.location.origin + avatar
+        }
+        return avatar
+      }
+    }
   }
 
   return ''

@@ -60,6 +60,7 @@ func (p *PushClient) PushKeys(ctx context.Context, operation int32, keys []strin
 // PushRoom pushes a message to a room
 func (p *PushClient) PushRoom(ctx context.Context, operation int32, typ, room string, msg []byte) error {
 	url := fmt.Sprintf("%s/goim/push/room?operation=%d&type=%s&room=%s", p.endpoint, operation, typ, room)
+	fmt.Printf("[PushRoom] Calling URL: %s, msg_len=%d\n", url, len(msg))
 
 	// Create request with raw message bytes as body
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(msg))
@@ -71,6 +72,7 @@ func (p *PushClient) PushRoom(ctx context.Context, operation int32, typ, room st
 	// Send request
 	resp, err := p.client.Do(req)
 	if err != nil {
+		fmt.Printf("[PushRoom] Request failed: %v\n", err)
 		return fmt.Errorf("send request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -78,9 +80,11 @@ func (p *PushClient) PushRoom(ctx context.Context, operation int32, typ, room st
 	// Check response
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		fmt.Printf("[PushRoom] Non-200 status: %d, body: %s\n", resp.StatusCode, string(body))
 		return fmt.Errorf("push failed: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
+	fmt.Printf("[PushRoom] Success: status=%d\n", resp.StatusCode)
 	return nil
 }
 

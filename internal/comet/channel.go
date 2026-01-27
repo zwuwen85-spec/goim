@@ -12,7 +12,9 @@ import (
 
 // Channel used by message pusher send msg to write goroutine.
 type Channel struct {
-	Room     *Room
+	Room     *Room // For backwards compatibility, deprecated
+	Rooms    map[string]*Room // Support multiple rooms
+	roomLock sync.RWMutex // Protect Rooms map
 	CliProto Ring
 	signal   chan *protocol.Proto
 	Writer   bufio.Writer
@@ -33,6 +35,7 @@ func NewChannel(cli, svr int) *Channel {
 	c.CliProto.Init(cli)
 	c.signal = make(chan *protocol.Proto, svr)
 	c.watchOps = make(map[int32]struct{})
+	c.Rooms = make(map[string]*Room)
 	return c
 }
 
@@ -93,4 +96,52 @@ func (c *Channel) Signal() {
 // Close close the channel.
 func (c *Channel) Close() {
 	c.signal <- protocol.ProtoFinish
+}
+
+// AddRoom add a room to the channel
+func (c *Channel) AddRoom(room *Room) {
+	c.roomLock.Lock()
+	if c.Rooms == nil {
+		c.Rooms = make(map[string]*Room)
+	}
+	c.Rooms[room.ID] = room
+	// For backwards compatibility, keep Room field updated
+	c.Room = room
+	c.roomLock.Unlock()
+}
+
+// RemoveRoom remove a room from the channel
+func (c *Channel) RemoveRoom(roomID string) {
+	c.roomLock.Lock()
+	delete(c.Rooms, roomID)
+	// Update backwards compatible Room field
+	if len(c.Rooms) > 0 {
+		for _, room := range c.Rooms {
+			c.Room = room
+			break
+		}
+	} else {
+		c.Room = nil
+	}
+	c.roomLock.Unlock()
+}
+
+// HasRoom check if channel is in a room
+func (c *Channel) HasRoom(roomID string) bool {
+	c.roomLock.RLock()
+	_, ok := c.Rooms[roomID]
+	c.roomLock.RUnlock()
+	return ok
+}
+
+// GetRooms get all rooms the channel is in
+func (c *Channel) GetRooms() map[string]*Room {
+	c.roomLock.RLock()
+	defer c.roomLock.RUnlock()
+	// Return a copy to avoid race conditions
+	rooms := make(map[string]*Room, len(c.Rooms))
+	for k, v := range c.Rooms {
+		rooms[k] = v
+	}
+	return rooms
 }

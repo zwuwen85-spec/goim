@@ -42,11 +42,16 @@ clean:
 ## start: 启动所有服务
 start: build
 	@echo "启动 GoIM Chat 服务..."
-	@nohup $(BINARY_DIR)/logic -conf=$(BINARY_DIR)/logic.toml > $(LOG_DIR)/logic.log 2>&1 & echo $$! > $(LOG_DIR)/logic.pid
+	@nohup $(BINARY_DIR)/logic -conf=$(BINARY_DIR)/logic.toml \
+		-node.region=sh -node.zone=sh001 -node.deploy.env=dev -node.host=logic1 \
+		-node.weight=10 > $(LOG_DIR)/logic.log 2>&1 & echo $$! > $(LOG_DIR)/logic.pid
 	@sleep 2
-	@nohup $(BINARY_DIR)/comet -conf=$(BINARY_DIR)/comet.toml > $(LOG_DIR)/comet.log 2>&1 & echo $$! > $(LOG_DIR)/comet.pid
+	@nohup $(BINARY_DIR)/comet -conf=$(BINARY_DIR)/comet.toml \
+		-node.region=sh -node.zone=sh001 -node.deploy.env=dev -node.host=comet1 \
+		-node.addrs=127.0.0.1 -node.weight=10 > $(LOG_DIR)/comet.log 2>&1 & echo $$! > $(LOG_DIR)/comet.pid
 	@sleep 2
-	@nohup $(BINARY_DIR)/job -conf=$(BINARY_DIR)/job.toml > $(LOG_DIR)/job.log 2>&1 & echo $$! > $(LOG_DIR)/job.pid
+	@nohup $(BINARY_DIR)/job -conf=$(BINARY_DIR)/job.toml \
+		-node.region=sh -node.zone=sh001 -node.deploy.env=dev -node.host=job1 > $(LOG_DIR)/job.log 2>&1 & echo $$! > $(LOG_DIR)/job.pid
 	@sleep 2
 	@nohup $(BINARY_DIR)/chatapi $(CMD_DIR)/chatapi/chatapi.toml > $(LOG_DIR)/chatapi.log 2>&1 & echo $$! > $(LOG_DIR)/chatapi.pid
 	@echo "所有服务已启动！使用 'make logs' 查看日志"
