@@ -25,6 +25,24 @@ goim is an im server writen in golang.
 
 ## Quick Start
 
+### Setup Discovery (Service Discovery)
+
+The project requires [Discovery](https://github.com/bilibili/discovery) for service registration and discovery.
+
+```bash
+# Install and start discovery (automatic)
+make discovery-start
+
+# Or install manually
+make discovery-setup
+
+# Check discovery status
+make discovery-status
+
+# View discovery logs
+make discovery-logs
+```
+
 ### Build
 ```
     make build
@@ -32,15 +50,30 @@ goim is an im server writen in golang.
 
 ### Run
 ```
-    make run
+    make start    # This will automatically start discovery if not running
     make stop
 
     // or
     nohup target/logic -conf=target/logic.toml -region=sh -zone=sh001 -deploy.env=dev -weight=10 2>&1 > target/logic.log &
     nohup target/comet -conf=target/comet.toml -region=sh -zone=sh001 -deploy.env=dev -weight=10 -addrs=127.0.0.1 2>&1 > target/logic.log &
-    nohup target/job -conf=target/job.toml -region=sh -zone=sh001 -deploy.env=dev 2>&1 > target/logic.log &
+    nohup target/job -conf=target/job.toml -region=sh -zone=sh001 -deploy.env=dev 2>&1 > target/job.log &
 
 ```
+
+### First Time Setup
+
+If you're cloning this repository to a new machine, simply run:
+
+```bash
+# Discovery will be automatically installed and started
+make start
+
+# Or manually install discovery first
+make discovery-setup
+make discovery-start
+make start
+```
+
 ### Environment
 ```
     env:
