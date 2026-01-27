@@ -150,6 +150,42 @@ export const useGroupStore = defineStore('group', () => {
     members.value = []
   }
 
+  // Update member info when user changes profile
+  const updateMemberInfo = (userId: number, updates: { nickname?: string; avatar?: string; signature?: string }) => {
+    // Find and update in current group members
+    const member = members.value.find(m => m.user?.id === userId)
+    if (member && member.user) {
+      if (updates.nickname !== undefined) {
+        member.user.nickname = updates.nickname
+      }
+      if (updates.avatar !== undefined) {
+        member.user.avatar = updates.avatar
+      }
+      if (updates.signature !== undefined) {
+        member.user.signature = updates.signature
+      }
+    }
+
+    // Also update in all groups' member lists
+    groups.value.forEach(group => {
+      const groupMember = group as any
+      if (groupMember.members && Array.isArray(groupMember.members)) {
+        const member = groupMember.members.find((m: any) => m.user?.id === userId)
+        if (member && member.user) {
+          if (updates.nickname !== undefined) {
+            member.user.nickname = updates.nickname
+          }
+          if (updates.avatar !== undefined) {
+            member.user.avatar = updates.avatar
+          }
+          if (updates.signature !== undefined) {
+            member.user.signature = updates.signature
+          }
+        }
+      }
+    })
+  }
+
   return {
     groups,
     currentGroup,
@@ -164,6 +200,7 @@ export const useGroupStore = defineStore('group', () => {
     leaveGroup,
     sendMessage,
     getGroupById,
-    clearCurrentGroup
+    clearCurrentGroup,
+    updateMemberInfo
   }
 })

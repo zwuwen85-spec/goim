@@ -15,7 +15,7 @@
           <div class="group-header">
             <el-avatar
               :size="60"
-              :src="group?.avatar"
+              :src="displayGroupAvatar"
               :style="{ backgroundColor: groupColor }"
               shape="square"
             >
@@ -257,6 +257,24 @@ const groupColor = computed(() => {
   const colors = ['#F56C6C', '#E6A23C', '#67C23A', '#409EFF', '#909399']
   const id = props.group?.id || 0
   return colors[id % colors.length]
+})
+
+// Display avatar URL with proper path handling
+const displayGroupAvatar = computed(() => {
+  const avatar = props.group?.avatar
+  if (!avatar) return undefined
+
+  // If it's already a full URL, return as is
+  if (avatar.startsWith('http://') || avatar.startsWith('https://')) {
+    return avatar
+  }
+
+  // If it's a relative path starting with /uploads/, use origin + path
+  if (avatar.startsWith('/uploads/')) {
+    return window.location.origin + avatar
+  }
+
+  return avatar
 })
 
 const getMemberDisplayName = (member: GroupMember | undefined) => {

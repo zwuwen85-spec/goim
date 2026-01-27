@@ -65,68 +65,88 @@ func (b *Bucket) RoomsCount() (res map[string]int32) {
 	return
 }
 
-// ChangeRoom change ro room
+// ChangeRoom change to room (backwards compatible - only one room at a time)
+// For multi-room support, use JoinRoom/LeaveRoom instead
 func (b *Bucket) ChangeRoom(nrid string, ch *Channel) (err error) {
-	var (
-		nroom *Room
-		ok    bool
-		oroom = ch.Room
-	)
 	// change to no room
 	if nrid == "" {
-		if oroom != nil && oroom.Del(ch) {
-			b.DelRoom(oroom)
+		// Leave all rooms
+		rooms := ch.GetRooms()
+		for roomID := range rooms {
+			b.LeaveRoom(ch, roomID)
 		}
 		ch.Room = nil
 		return
 	}
-	b.cLock.Lock()
-	if nroom, ok = b.rooms[nrid]; !ok {
-		nroom = NewRoom(nrid)
-		b.rooms[nrid] = nroom
-	}
-	b.cLock.Unlock()
-	if oroom != nil && oroom.Del(ch) {
-		b.DelRoom(oroom)
-	}
-
-	if err = nroom.Put(ch); err != nil {
-		return
-	}
-	ch.Room = nroom
-	return
+	// For multi-room support: just join the new room without leaving old rooms
+	// This allows channels to be in multiple rooms simultaneously
+	return b.JoinRoom(ch, nrid)
 }
 
-// Put put a channel according with sub key.
-func (b *Bucket) Put(rid string, ch *Channel) (err error) {
+// JoinRoom join a room (supports multiple rooms)
+func (b *Bucket) JoinRoom(ch *Channel, roomID string) (err error) {
+	// Check if already in this room
+	if ch.HasRoom(roomID) {
+		return nil
+	}
+
 	var (
 		room *Room
 		ok   bool
 	)
+
+	b.cLock.Lock()
+	if room, ok = b.rooms[roomID]; !ok {
+		room = NewRoom(roomID)
+		b.rooms[roomID] = room
+	}
+	b.cLock.Unlock()
+
+	if err = room.Put(ch); err != nil {
+		return
+	}
+
+	ch.AddRoom(room)
+	return
+}
+
+// LeaveRoom leave a room (supports multiple rooms)
+func (b *Bucket) LeaveRoom(ch *Channel, roomID string) {
+	// Check if in this room
+	if !ch.HasRoom(roomID) {
+		return
+	}
+
+	b.cLock.Lock()
+	room := b.rooms[roomID]
+	b.cLock.Unlock()
+
+	if room != nil && room.Del(ch) {
+		b.DelRoom(room)
+	}
+
+	ch.RemoveRoom(roomID)
+}
+
+// Put put a channel according with sub key.
+func (b *Bucket) Put(rid string, ch *Channel) (err error) {
 	b.cLock.Lock()
 	// close old channel
 	if dch := b.chs[ch.Key]; dch != nil {
 		dch.Close()
 	}
 	b.chs[ch.Key] = ch
-	if rid != "" {
-		if room, ok = b.rooms[rid]; !ok {
-			room = NewRoom(rid)
-			b.rooms[rid] = room
-		}
-		ch.Room = room
-	}
 	b.ipCnts[ch.IP]++
 	b.cLock.Unlock()
-	if room != nil {
-		err = room.Put(ch)
+	// If rid is provided, join the room
+	if rid != "" {
+		err = b.JoinRoom(ch, rid)
 	}
 	return
 }
 
 // Del delete the channel by sub key.
 func (b *Bucket) Del(dch *Channel) {
-	room := dch.Room
 	b.cLock.Lock()
 	if ch, ok := b.chs[dch.Key]; ok {
 		if ch == dch {
@@ -140,9 +160,11 @@ func (b *Bucket) Del(dch *Channel) {
 		}
 	}
 	b.cLock.Unlock()
-	if room != nil && room.Del(dch) {
-		// if empty room, must delete from bucket
-		b.DelRoom(room)
+
+	// Remove from all rooms
+	rooms := dch.GetRooms()
+	for roomID := range rooms {
+		b.LeaveRoom(dch, roomID)
 	}
 }
 

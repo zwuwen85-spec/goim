@@ -184,6 +184,7 @@ func (s *Server) setupRoutes() {
 				group.GET("/info/:id", handler.Wrap(s.handleGetGroupInfo))
 				group.GET("/members/:id", handler.Wrap(s.handleGetGroupMembers))
 				group.PUT("/info/:id", handler.Wrap(s.handleUpdateGroup))
+				group.POST("/avatar/:id", handler.Wrap(s.handleUploadGroupAvatar))
 				// New: invite, kick, set admin, etc.
 				group.POST("/invite/:id", handler.Wrap(s.handleInviteMember))
 				group.DELETE("/kick/:id/:userId", handler.Wrap(s.handleKickMember))
@@ -445,6 +446,28 @@ func (s *Server) handleUpdateProfile(c *gin.Context) (interface{}, error) {
 		return nil, fmt.Errorf("failed to update profile: %w", err)
 	}
 
+	// Get all groups the user is a member of and push user update notification
+	groupMembers, err := s.groupDAO.GetGroupsByUser(ctx, userID)
+	if err == nil && len(groupMembers) > 0 {
+		updateMsg := map[string]interface{}{
+			"type":      "user_update",
+			"user_id":   user.ID,
+			"nickname":  user.Nickname,
+			"avatar":    user.AvatarURL.String,
+			"signature": user.Signature.String,
+			"timestamp": time.Now().Unix(),
+		}
+		pushJSON, _ := json.Marshal(updateMsg)
+		for _, member := range groupMembers {
+			if member.Group != nil {
+				roomID := fmt.Sprintf("%d", member.Group.ID)
+				if err := s.pushClient.PushRoom(ctx, 1001, "group", roomID, pushJSON); err != nil {
+					log.Errorf("Failed to push user update to group %d: %v", member.Group.ID, err)
+				}
+			}
+		}
+	}
+
 	return gin.H{"message": "profile updated successfully"}, nil
 }
 
@@ -550,6 +573,32 @@ func (s *Server) handleUploadAvatar(c *gin.Context) (interface{}, error) {
 	// Update user avatar in database
 	if err := s.userDAO.UpdateAvatar(ctx, userID, avatarURL); err != nil {
 		return nil, fmt.Errorf("failed to update avatar: %w", err)
+	}
+
+	// Get user info for the push notification
+	user, err := s.userDAO.FindByID(ctx, userID)
+	if err == nil && user != nil {
+		// Get all groups the user is a member of and push user update notification
+		groupMembers, err := s.groupDAO.GetGroupsByUser(ctx, userID)
+		if err == nil && len(groupMembers) > 0 {
+			updateMsg := map[string]interface{}{
+				"type":      "user_update",
+				"user_id":   user.ID,
+				"nickname":  user.Nickname,
+				"avatar":    user.AvatarURL.String,
+				"signature": user.Signature.String,
+				"timestamp": time.Now().Unix(),
+			}
+			pushJSON, _ := json.Marshal(updateMsg)
+			for _, member := range groupMembers {
+				if member.Group != nil {
+					roomID := fmt.Sprintf("%d", member.Group.ID)
+					if err := s.pushClient.PushRoom(ctx, 1001, "group", roomID, pushJSON); err != nil {
+						log.Errorf("Failed to push user avatar update to group %d: %v", member.Group.ID, err)
+					}
+				}
+			}
+		}
 	}
 
 	return gin.H{
@@ -997,11 +1046,130 @@ func (s *Server) handleUpdateGroup(c *gin.Context) (interface{}, error) {
 		return nil, fmt.Errorf("failed to update group: %w", err)
 	}
 
+	// Push group update notification to all group members via WebSocket
+	// Note: PushRoom will encode the room key as "group://<id>", so pass just the ID
+	roomID := fmt.Sprintf("%d", gID)
+	updateMsg := map[string]interface{}{
+		"type":      "group_update",
+		"group_id":  group.ID,
+		"group_no":  group.GroupNo,
+		"name":      group.Name,
+		"avatar":    group.AvatarURL.String,
+		"timestamp": time.Now().Unix(),
+	}
+	pushJSON, _ := json.Marshal(updateMsg)
+	if err := s.pushClient.PushRoom(ctx, 1001, "group", roomID, pushJSON); err != nil {
+		log.Errorf("Failed to push group update notification: %v", err)
+	}
+
 	return gin.H{
 		"group_id":    group.ID,
 		"group_no":    group.GroupNo,
 		"name":        group.Name,
 		"max_members": group.MaxMembers,
+	}, nil
+}
+
+func (s *Server) handleUploadGroupAvatar(c *gin.Context) (interface{}, error) {
+	groupID := c.Param("id")
+	var gID int64
+	if _, err := fmt.Sscanf(groupID, "%d", &gID); err != nil {
+		return nil, fmt.Errorf("invalid group id")
+	}
+
+	userID := middleware.GetUserIDFromGin(c)
+	ctx := c.Request.Context()
+
+	// Find group
+	group, err := s.groupDAO.FindByID(ctx, gID)
+	if err != nil || group == nil {
+		return nil, fmt.Errorf("group not found")
+	}
+
+	// Check if user is owner or admin
+	role, err := s.groupDAO.GetMemberRole(ctx, gID, userID)
+	if err != nil || (role != 3 && role != 2) {
+		return nil, fmt.Errorf("only owner or admin can update group avatar")
+	}
+
+	// Get file from form
+	file, err := c.FormFile("avatar")
+	if err != nil {
+		return nil, fmt.Errorf("no file uploaded: %w", err)
+	}
+
+	// Open the uploaded file
+	src, err := file.Open()
+	if err != nil {
+		return nil, fmt.Errorf("failed to open uploaded file: %w", err)
+	}
+	defer src.Close()
+
+	// Validate file size (limit 10MB)
+	if file.Size > 10*1024*1024 {
+		return nil, fmt.Errorf("file size exceeds 10MB limit")
+	}
+
+	// Validate file type by extension
+	allowedTypes := map[string]bool{
+		".jpg":  true,
+		".jpeg": true,
+		".png":  true,
+		".gif":  true,
+		".webp": true,
+	}
+	ext := filepath.Ext(file.Filename)
+	if !allowedTypes[ext] {
+		return nil, fmt.Errorf("invalid file type, only jpg, jpeg, png, gif, webp are allowed")
+	}
+
+	// Create upload directory (relative path)
+	uploadDir := "./uploads/groups"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create upload directory: %w", err)
+	}
+
+	// Generate unique filename
+	filename := fmt.Sprintf("group_%d_%d%s", gID, time.Now().Unix(), ext)
+	uploadPath := filepath.Join(uploadDir, filename)
+
+	// Create destination file
+	dst, err := os.Create(uploadPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create destination file: %w", err)
+	}
+	defer dst.Close()
+
+	// Copy file content
+	if _, err := io.Copy(dst, src); err != nil {
+		return nil, fmt.Errorf("failed to save file: %w", err)
+	}
+
+	// Generate avatar URL
+	avatarURL := fmt.Sprintf("/uploads/groups/%s", filename)
+
+	// Update group avatar in database
+	if err := s.groupDAO.UpdateAvatar(ctx, gID, avatarURL); err != nil {
+		return nil, fmt.Errorf("failed to update group avatar: %w", err)
+	}
+
+	// Push group update notification to all group members via WebSocket
+	// Note: PushRoom will encode the room key as "group://<id>", so pass just the ID
+	roomID := fmt.Sprintf("%d", gID)
+	updateMsg := map[string]interface{}{
+		"type":      "group_update",
+		"group_id":  gID,
+		"avatar":    avatarURL,
+		"timestamp": time.Now().Unix(),
+	}
+	pushJSON, _ := json.Marshal(updateMsg)
+	if err := s.pushClient.PushRoom(ctx, 1001, "group", roomID, pushJSON); err != nil {
+		log.Errorf("Failed to push group avatar update notification: %v", err)
+	}
+
+	return gin.H{
+		"message":    "group avatar uploaded successfully",
+		"avatar_url": avatarURL,
 	}, nil
 }
 
@@ -1234,6 +1402,20 @@ func (s *Server) handleSetMemberNickname(c *gin.Context) (interface{}, error) {
 		return nil, fmt.Errorf("failed to update nickname: %w", err)
 	}
 
+	// Push group member nickname update notification to all group members via WebSocket
+	roomID := fmt.Sprintf("%d", gID)
+	updateMsg := map[string]interface{}{
+		"type":        "group_member_update",
+		"group_id":    gID,
+		"user_id":     targetUserID,
+		"nickname":    req.Nickname,
+		"timestamp":   time.Now().Unix(),
+	}
+	pushJSON, _ := json.Marshal(updateMsg)
+	if err := s.pushClient.PushRoom(ctx, 1001, "group", roomID, pushJSON); err != nil {
+		log.Errorf("Failed to push group member nickname update notification: %v", err)
+	}
+
 	return gin.H{"message": "nickname updated successfully"}, nil
 }
 
@@ -1457,13 +1639,29 @@ func (s *Server) handleSendMessage(c *gin.Context) (interface{}, error) {
 	}
 
 	// Prepare message for push
+	// Parse content to avoid double JSON encoding for group messages
+	var contentText string
+	if req.MsgType == 1 {
+		// Text message: try to parse JSON content (for group messages)
+		var contentObj map[string]string
+		if err := json.Unmarshal([]byte(req.Content), &contentObj); err == nil {
+			// Group chat message content is {"text": "message"}
+			contentText = contentObj["text"]
+		} else {
+			// Single chat message content is plain text
+			contentText = req.Content
+		}
+	} else {
+		contentText = req.Content
+	}
+
 	pushContent := map[string]interface{}{
 		"msg_id":            msg.MsgID,
 		"from_user_id":      userID,
 		"conversation_id":   conversationID,
 		"conversation_type": req.ConversationType,
 		"msg_type":          req.MsgType,
-		"content":           req.Content,
+		"content":           contentText,
 		"seq":               seq,
 		"created_at":        msg.CreatedAt.Unix(),
 	}
@@ -1477,9 +1675,13 @@ func (s *Server) handleSendMessage(c *gin.Context) (interface{}, error) {
 		}
 	} else if req.ConversationType == model.ConversationTypeGroup {
 		// Group chat: push to room
-		room := fmt.Sprintf("group://%d", req.ToGroupID)
+		// Note: pass only the room ID, Logic will add the "group://" prefix via EncodeRoomKey
+		room := fmt.Sprintf("%d", req.ToGroupID)
+		log.Infof("Pushing to group room: %s, msg_len=%d", room, len(pushJSON))
 		if err := s.pushClient.PushRoom(ctx, 1001, "group", room, pushJSON); err != nil {
 			log.Errorf("Failed to push room message: %v", err)
+		} else {
+			log.Infof("Successfully pushed to group room: %s", room)
 		}
 	}
 
@@ -1574,15 +1776,25 @@ func (s *Server) handleMarkRead(c *gin.Context) (interface{}, error) {
 	userID := middleware.GetUserIDFromGin(c)
 	ctx := c.Request.Context()
 
+	// Debug logging
+	fmt.Fprintf(os.Stderr, "=== handleMarkRead: userID=%d, conversationID=%d, conversationType=%d, msgID=%d ===\n",
+		userID, req.ConversationID, req.ConversationType, req.MsgID)
+
 	// Mark message as read
 	if err := s.messageDAO.MarkMessagesRead(ctx, req.MsgID, userID); err != nil {
 		return nil, fmt.Errorf("failed to mark read: %w", err)
 	}
 
 	// Clear unread count
-	if err := s.conversationDAO.ClearUnread(ctx, userID, req.ConversationID, req.ConversationType); err != nil {
-		log.Errorf("Failed to clear unread: %v", err)
+	// req.ConversationID is already the target_id stored in the database
+	// (for single chat it's the calculated pair ID, for group chat it's the group ID)
+	result, err := s.conversationDAO.ClearUnread(ctx, userID, req.ConversationID, req.ConversationType)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "=== handleMarkRead: ClearUnread ERROR: %v ===\n", err)
+		return nil, fmt.Errorf("failed to clear unread: %w", err)
 	}
+
+	fmt.Fprintf(os.Stderr, "=== handleMarkRead: ClearUnread affected rows=%d ===\n", result)
 
 	return gin.H{"message": "marked as read"}, nil
 }

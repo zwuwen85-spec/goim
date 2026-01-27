@@ -196,6 +196,13 @@ func (d *GroupDAO) UpdateGroup(ctx context.Context, group *model.Group) error {
 	return err
 }
 
+// UpdateAvatar updates group avatar URL
+func (d *GroupDAO) UpdateAvatar(ctx context.Context, groupID int64, avatarURL string) error {
+	query := `UPDATE ` + "`groups`" + ` SET avatar_url = ? WHERE id = ?`
+	_, err := d.mysql.Exec(ctx, query, avatarURL, groupID)
+	return err
+}
+
 // IsMember checks if a user is a member of a group
 func (d *GroupDAO) IsMember(ctx context.Context, groupID, userID int64) (bool, error) {
 	query := `SELECT id FROM group_members WHERE group_id = ? AND user_id = ?`

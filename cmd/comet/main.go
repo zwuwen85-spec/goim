@@ -82,7 +82,13 @@ func main() {
 
 func register(dis *naming.Discovery, srv *comet.Server) context.CancelFunc {
 	env := conf.Conf.Env
-	addr := ip.InternalIP()
+	// Use configured address if available, otherwise use auto-detected IP
+	var addr string
+	if len(env.Addrs) > 0 && env.Addrs[0] != "" {
+		addr = env.Addrs[0]
+	} else {
+		addr = ip.InternalIP()
+	}
 	_, port, _ := net.SplitHostPort(conf.Conf.RPCServer.Addr)
 	// Use first websocket bind address
 	wsBind := conf.Conf.Websocket.Bind[0]

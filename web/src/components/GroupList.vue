@@ -19,7 +19,13 @@
           :class="{ active: currentGroupId === group.id }"
           @click="handleSelect(group)"
         >
-          <el-avatar :size="48" :style="{ backgroundColor: getGroupColor(group.id) }" shape="square" class="item-avatar">
+          <el-avatar
+            :size="48"
+            :src="getGroupAvatar(group)"
+            :style="!group.avatar ? { backgroundColor: getGroupColor(group.id) } : {}"
+            shape="square"
+            class="item-avatar"
+          >
             <el-icon size="24" color="white"><ChatDotRound /></el-icon>
           </el-avatar>
           <div class="item-content">
@@ -68,6 +74,16 @@ const createForm = ref({
 })
 
 const currentGroupId = computed(() => groupStore.currentGroup?.id)
+
+// Get group avatar URL with proper path handling
+const getGroupAvatar = (group: Group) => {
+  if (!group.avatar) return ''
+  // If it's a relative path from uploads, prepend origin
+  if (group.avatar.startsWith('/uploads/')) {
+    return window.location.origin + group.avatar
+  }
+  return group.avatar
+}
 
 const groupColors: Record<number, string> = {}
 const getGroupColor = (groupId: number) => {

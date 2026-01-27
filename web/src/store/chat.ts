@@ -95,14 +95,32 @@ export const useChatStore = defineStore('chat', () => {
       const response = await conversationApi.getList()
       if ((response as any).code === 0) {
         const rawList = (response as any).data?.conversations || []
-        // Normalize types
-        const newList = rawList.map((c: any) => ({
-          ...c,
-          target_id: Number(c.target_id),
-          conversation_type: Number(c.conversation_type),
-          unread_count: Number(c.unread_count)
-        }))
-        
+        // Normalize types and extract avatar/name from nested objects
+        const newList = rawList.map((c: any) => {
+          // Extract avatar from target_user or target_group
+          let avatar = undefined
+          let name = undefined
+
+          if (c.conversation_type === 1 && c.target_user) {
+            // Private chat: use target_user.avatar_url and nickname
+            avatar = c.target_user.avatar_url
+            name = c.target_user.nickname
+          } else if (c.conversation_type === 2 && c.target_group) {
+            // Group chat: use target_group.avatar_url and name (handle sql.NullString)
+            avatar = c.target_group.avatar_url?.String || c.target_group.avatar_url
+            name = c.target_group.name?.String || c.target_group.name
+          }
+
+          return {
+            ...c,
+            target_id: Number(c.target_id),
+            conversation_type: Number(c.conversation_type),
+            unread_count: Number(c.unread_count),
+            avatar, // Add avatar to top level
+            name    // Add name to top level
+          }
+        })
+
         // Merge with local conversations to preserve last message info if server doesn't provide it fully
         // Or simply overwrite if server is source of truth. Usually server list has last_msg info.
         conversations.value = newList
@@ -133,8 +151,10 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const openChat = async (targetId: number, conversationType: number, name?: string, avatar?: string) => {
+    console.log('[openChat] Called with targetId:', targetId, 'conversationType:', conversationType, 'name:', name)
+
     let conversationId = targetId
-    
+
     const userStore = useUserStore()
     const myId = userStore.currentUser?.id || 0
 
@@ -147,12 +167,21 @@ export const useChatStore = defineStore('chat', () => {
       const id1 = Math.min(myId, targetId)
       const id2 = Math.max(myId, targetId)
       conversationId = id1 * 1000000000 + id2
+      console.log('[openChat] Single chat: id1:', id1, 'id2:', id2, 'conversationId:', conversationId)
+    } else if (conversationType === 2) {
+      // Group chat: conversationId is the group_id
+      conversationId = targetId
+      console.log('[openChat] Group chat: conversationId:', conversationId)
+    } else if (conversationType === 3) {
+      // AI chat: conversationId is the botId
+      conversationId = targetId
+      console.log('[openChat] AI chat: conversationId:', conversationId)
     }
-    // For AI chat (type 3), conversationId is usually just the botId (targetId)
-    // No special calculation needed as it is like a group chat (id is unique)
 
     const sessionKey = `${conversationId}:${conversationType}`
+    console.log('[openChat] sessionKey:', sessionKey)
     let session = sessions.value.get(sessionKey)
+    console.log('[openChat] Found session:', session ? 'YES' : 'NO', session)
 
     if (!session || !session.isHistoryLoaded || session.messages.length === 0) {
       // Load history messages
@@ -214,6 +243,28 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     currentSession.value = sessions.value.get(sessionKey)!
+    console.log('[openChat] Set currentSession:', currentSession.value)
+    console.log('[openChat] currentSession.targetId:', currentSession.value?.targetId)
+
+    // Mark as read when opening the chat
+    if (currentSession.value.messages.length > 0) {
+      const lastMsg = currentSession.value.messages[currentSession.value.messages.length - 1]
+      if (lastMsg.msg_id) {
+        try {
+          await messageApi.markRead({
+            conversation_id: conversationId,
+            conversation_type: conversationType,
+            msg_id: lastMsg.msg_id
+          })
+          console.log('[openChat] Marked as read:', conversationId, 'msg_id:', lastMsg.msg_id)
+
+          // Clear local unread count immediately
+          currentSession.value.unreadCount = 0
+        } catch (error) {
+          console.error('[openChat] Failed to mark as read:', error)
+        }
+      }
+    }
 
     // Ensure conversation exists in the list (for sidebar)
     const existingConv = conversations.value.find(
@@ -242,34 +293,30 @@ export const useChatStore = defineStore('chat', () => {
        conversations.value.unshift(newConv)
     }
 
-    // Clear unread count
+    // Clear unread count in conversation list
     const conv = conversations.value.find(
       c => c.target_id === targetId && c.conversation_type === conversationType
     )
-    if (conv && conv.unread_count > 0) {
-      // Find last message to mark as read
-      const session = sessions.value.get(sessionKey)
-      if (session && session.messages.length > 0) {
-        const lastMsg = session.messages[session.messages.length - 1]
-        await messageApi.markRead({
-          conversation_id: conversationId,
-          conversation_type: conversationType,
-          msg_id: lastMsg.id
-        })
-        conv.unread_count = 0
-      }
+    if (conv) {
+      conv.unread_count = 0
     }
+    // Save to storage to persist the cleared unread count
+    saveSessionsToStorage()
   }
 
   const sendMessage = async (content: string, msgType: number = 1) => {
     if (!currentSession.value) return false
+
+    console.log('[sendMessage] currentSession:', currentSession.value)
+    console.log('[sendMessage] currentSession.targetId:', currentSession.value.targetId)
+    console.log('[sendMessage] currentSession.targetType:', currentSession.value.targetType)
 
     const userStore = useUserStore()
     const currentUserId = userStore.currentUser?.id || 0
 
     // For self-chat, targetId is currentUserId
     const toUserId = currentSession.value.targetType === 'user' ? currentSession.value.targetId : undefined
-    
+
     console.log('Sending message to', toUserId, 'type', currentSession.value.targetType)
 
     const response = await messageApi.send({
@@ -320,11 +367,13 @@ export const useChatStore = defineStore('chat', () => {
     let targetId = Number(msg.conversation_id)
     const convType = Number(msg.conversation_type)
 
+    console.log('[addMessage] convType:', convType, 'conversation_id:', msg.conversation_id, 'targetId:', targetId)
+
     if (convType === 1) {
         const userStore = useUserStore()
         const myId = userStore.currentUser?.id || 0
         const convId = Number(msg.conversation_id)
-        
+
         // Reverse Pair ID: PairID = id1 * 1e9 + id2
         const id1 = Math.floor(convId / 1000000000)
         const id2 = convId % 1000000000
@@ -335,11 +384,15 @@ export const useChatStore = defineStore('chat', () => {
             // Fallback if myId is not in the pair (should not happen)
             targetId = id1 === myId ? id2 : id1
         }
-        
+
         // Special check for self-chat: if myId * 1e9 + myId == convId, then targetId is myId
         if (id1 === myId && id2 === myId) {
             targetId = myId
         }
+        console.log('[addMessage] Single chat: myId:', myId, 'id1:', id1, 'id2:', id2, 'final targetId:', targetId)
+    } else if (convType === 2) {
+        // Group chat: targetId is the group_id
+        console.log('[addMessage] Group chat: targetId (group_id):', targetId)
     }
 
     if (!session) {
@@ -352,6 +405,7 @@ export const useChatStore = defineStore('chat', () => {
         messages: []
       }
       sessions.value.set(sessionKey, session)
+      console.log('[addMessage] Created new session:', session)
     }
 
     // Check if message already exists to avoid duplication (especially for self-chat where we push manually first)
@@ -453,6 +507,8 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const updateConversation = (targetId: number, type: number, content: string, time: string, isFromSelf: boolean = false) => {
+    console.log('[updateConversation] Called with targetId:', targetId, 'type:', type, 'isFromSelf:', isFromSelf)
+
     // For AI chat, we might need to handle targetId carefully
     // In chat store, conversation_id for AI is just the bot_id (targetId)
     // But in conversations list, it might be stored with a specific ID
@@ -466,16 +522,12 @@ export const useChatStore = defineStore('chat', () => {
 
     // Allow self-chat, but ensure we don't create duplicates.
     // In self-chat, targetId is currentUserId.
-    
-    let conv = conversations.value.find(c => c.target_id === targetIdNum && c.conversation_type === typeNum)
 
-    if (!conv && typeNum === 3) {
-        // If not found and it's AI, try to find it again or create it
-        // Sometimes type 3 might be missing if it wasn't loaded from server list yet
-    }
+    let conv = conversations.value.find(c => c.target_id === targetIdNum && c.conversation_type === typeNum)
+    console.log('[updateConversation] Found conversation:', conv ? 'YES' : 'NO')
 
     if (conv) {
-      console.log('Updating existing conversation', targetIdNum, content)
+      console.log('[updateConversation] Updating existing conversation', targetIdNum, content)
       conv.last_msg_content = content
       conv.last_msg_time = time
 
@@ -483,6 +535,7 @@ export const useChatStore = defineStore('chat', () => {
       if (isFromSelf) {
         // If we sent the message, reset unread count
         conv.unread_count = 0
+        console.log('[updateConversation] Message from self, reset unread to 0')
       } else {
         // If someone else sent the message and we're not currently viewing this chat, increment unread
         const conversationId = typeNum === 1 ? (() => {
@@ -492,10 +545,15 @@ export const useChatStore = defineStore('chat', () => {
         })() : targetIdNum
 
         const sessionKey = `${conversationId}:${typeNum}`
+        console.log('[updateConversation] Message from others, sessionKey:', sessionKey, 'currentSession:', currentSession.value?.id)
+
         // Only increment if this is not the currently active session
         if (currentSession.value?.id !== sessionKey) {
-          conv.unread_count = (conv.unread_count || 0) + 1
+          const oldUnread = conv.unread_count || 0
+          conv.unread_count = oldUnread + 1
+          console.log('[updateConversation] Incremented unread:', oldUnread, '->', conv.unread_count)
         } else {
+          console.log('[updateConversation] Currently viewing this chat, reset unread to 0')
           conv.unread_count = 0
         }
       }

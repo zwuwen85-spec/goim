@@ -4,6 +4,9 @@ export const OP_HEARTBEAT_REPLY = 3
 export const OP_MESSAGE = 5
 export const OP_AUTH = 7
 export const OP_AUTH_REPLY = 8
+export const OP_MESSAGE_PUSH = 9  // 消息推送
+export const OP_CHANGE_ROOM = 12  // 加入/切换房间
+export const OP_CHANGE_ROOM_REPLY = 13  // 加入/切换房间回复
 
 export const PROTOCOL_VERSION = 102
 export const HEADER_SIZE = 16
@@ -70,6 +73,9 @@ export function getOpName(op: number): string {
     case OP_MESSAGE: return 'Message'
     case OP_AUTH: return 'Auth'
     case OP_AUTH_REPLY: return 'Auth Reply'
+    case OP_MESSAGE_PUSH: return 'Message Push'
+    case OP_CHANGE_ROOM: return 'Change Room'
+    case OP_CHANGE_ROOM_REPLY: return 'Change Room Reply'
     default: return `Unknown(${op})`
   }
 }

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket 调试工具</title>
+</head>
+<body>
+    <h1>WebSocket 调试工具</h1>
+    <div>
+        <label>用户 ID: <input type="number" id="userId" value="9003"></label>
+        <button onclick="connect()">连接</button>
+        <button onclick="disconnect()">断开</button>
+    </div>
+    <div>
+        <h3>状态: <span id="status">未连接</span></h3>
+    </div>
+    <div>
+        <h3>收到的消息:</h3>
+        <pre id="messages"></pre>
+    </div>
+
+    <script>
+        const PROTOCOL_VERSION = 102;
+        const HEADER_SIZE = 16;
+        const OP_AUTH = 7;
+        const OP_HEARTBEAT = 2;
+        let ws = null;
+        let seq = 1;
+
+        function encodeMessage(ver, op, seq, body = '') {
+            const encoder = new TextEncoder();
+            const bodyBytes = encoder.encode(body);
+            const bodyLen = bodyBytes.length;
+            const packLen = HEADER_SIZE + bodyLen;
+
+            const buffer = new ArrayBuffer(packLen);
+            const view = new DataView(buffer);
+            const bytes = new Uint8Array(buffer);
+
+            view.setUint32(0, packLen, false);
+            view.setUint16(4, HEADER_SIZE, false);
+            view.setUint16(6, ver, false);
+            view.setUint32(8, op, false);
+            view.setUint32(12, seq, false);
+
+            if (bodyLen > 0) {
+                bytes.set(bodyBytes, HEADER_SIZE);
+            }
+
+            return buffer;
+        }
+
+        function decodeMessage(buffer) {
+            const view = new DataView(buffer);
+            const packLen = view.getUint32(0, false);
+            const headerLen = view.getUint16(4, false);
+            const ver = view.getUint16(6, false);
+            const op = view.getUint32(8, false);
+            const seq = view.getUint32(12, false);
+            const bodyLen = packLen - headerLen;
+
+            let body = '';
+            if (bodyLen > 0) {
+                const bodyBytes = new Uint8Array(buffer, headerLen, bodyLen);
+                const decoder = new TextDecoder();
+                body = decoder.decode(bodyBytes);
+            }
+
+            return { ver, op, seq, body };
+        }
+
+        function getOpName(op) {
+            const names = {
+                2: 'HEARTBEAT', 3: 'HEARTBEAT_REPLY',
+                5: 'MESSAGE', 7: 'AUTH', 8: 'AUTH_REPLY',
+                9: 'MESSAGE_PUSH', 10: 'HEARTBEAT_REQ'
+            };
+            return names[op] || `UNKNOWN(${op})`;
+        }
+
+        function connect() {
+            const userId = parseInt(document.getElementById('userId').value);
+            const wsUrl = 'ws://localhost:3102/sub';
+
+            ws = new WebSocket(wsUrl);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                document.getElementById('status').textContent = '已连接';
+                log('✅ WebSocket 连接成功');
+
+                const authData = JSON.stringify({
+                    mid: userId,
+                    key: `user_${userId}`,
+                    room_id: '',
+                    platform: 'web',
+                    accepts: [1001, 1002, 1003]
+                });
+
+                log(`📤 发送认证: mid=${userId}, key=user_${userId}`);
+                ws.send(encodeMessage(PROTOCOL_VERSION, OP_AUTH, seq++, authData));
+            };
+
+            ws.onmessage = (event) => {
+                const msg = decodeMessage(event.data);
+                log(`📥 [消息] OP=${getOpName(msg.op)} (${msg.op}), SEQ=${msg.seq}`);
+
+                if (msg.op === 8) {
+                    log('   ✅ 认证成功！');
+                } else if (msg.body) {
+                    log(`   Body: ${msg.body.substring(0, 200)}`);
+                    try {
+                        const data = JSON.parse(msg.body);
+                        log(`   解析成功: ${JSON.stringify(data, null, 2)}`);
+                    } catch (e) {
+                        log(`   解析失败: ${e.message}`);
+                    }
+                }
+            };
+
+            ws.onerror = (error) => {
+                log(`❌ 错误: ${error}`);
+            };
+
+            ws.onclose = () => {
+                document.getElementById('status').textContent = '已断开';
+                log('🔌 连接关闭');
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        function log(message) {
+            const messages = document.getElementById('messages');
+            const time = new Date().toLocaleTimeString();
+            messages.textContent = `[${time}] ${message}\n` + messages.textContent;
+        }
+
+        // 每30秒发送心跳
+        setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(encodeMessage(PROTOCOL_VERSION, OP_HEARTBEAT, seq++));
+                log('💓 发送心跳');
+            }
+        }, 30000);
+    </script>
+</body>
+</html>

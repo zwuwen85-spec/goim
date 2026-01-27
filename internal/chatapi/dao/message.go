@@ -217,14 +217,18 @@ func (d *ConversationDAO) IncrementUnread(ctx context.Context, userID, targetID 
 }
 
 // ClearUnread clears unread count for a conversation
-func (d *ConversationDAO) ClearUnread(ctx context.Context, userID, targetID int64, convType int8) error {
+func (d *ConversationDAO) ClearUnread(ctx context.Context, userID, targetID int64, convType int8) (int64, error) {
 	query := `
 		UPDATE conversations
 		SET unread_count = 0, updated_at = NOW()
 		WHERE user_id = ? AND target_id = ? AND conversation_type = ?
 	`
-	_, err := d.mysql.Exec(ctx, query, userID, targetID, convType)
-	return err
+	result, err := d.mysql.Exec(ctx, query, userID, targetID, convType)
+	if err != nil {
+		return 0, err
+	}
+	rowsAffected, _ := result.RowsAffected()
+	return rowsAffected, nil
 }
 
 // scanConversation scans a conversation from a row
