@@ -13,6 +13,7 @@ BINARY_DIR = target
 CMD_DIR = cmd
 LOG_DIR = logs
 CONFIG_DIR = $(CMD_DIR)
+DISCOVERY_DIR = ../discovery
 
 # 默认目标
 all: build
@@ -42,6 +43,14 @@ clean:
 ## start: 启动所有服务
 start: build
 	@echo "启动 GoIM Chat 服务..."
+	@echo "检查 discovery 服务..."
+	@if ! lsof -i :7171 > /dev/null 2>&1; then \
+		echo "discovery 未运行，正在启动..."; \
+		$(MAKE) discovery-start; \
+	else \
+		echo "discovery 已在运行"; \
+	fi
+	@sleep 1
 	@nohup $(BINARY_DIR)/logic -conf=$(BINARY_DIR)/logic.toml \
 		-node.region=sh -node.zone=sh001 -node.deploy.env=dev -node.host=logic1 \
 		-node.weight=10 > $(LOG_DIR)/logic.log 2>&1 & echo $$! > $(LOG_DIR)/logic.pid
@@ -148,6 +157,72 @@ web-build:
 	@echo "编译前端..."
 	cd web && npm run build
 
+## discovery-setup: 安装 discovery 服务发现模块
+discovery-setup:
+	@echo "安装 discovery 服务..."
+	@if [ ! -d "$(DISCOVERY_DIR)" ]; then \
+		echo "克隆 discovery 项目..."; \
+		cd .. && git clone https://github.com/bilibili/discovery.git; \
+		cd $(DISCOVERY_DIR) && make build; \
+		echo "discovery 安装完成！"; \
+	else \
+		echo "discovery 已存在，跳过安装"; \
+	fi
+
+## discovery-start: 启动 discovery 服务
+discovery-start:
+	@echo "启动 discovery 服务..."
+	@if [ ! -d "$(DISCOVERY_DIR)" ]; then \
+		echo "discovery 未安装，正在安装..."; \
+		$(MAKE) discovery-setup; \
+	fi
+	@if [ ! -f "$(DISCOVERY_DIR)/discovery" ]; then \
+		echo "编译 discovery..."; \
+		cd $(DISCOVERY_DIR) && make build; \
+	fi
+	@cd $(DISCOVERY_DIR) && \
+		nohup ./discovery -conf cmd/discovery/discovery.toml \
+			-alsologtostderr > logs/discovery.log 2>&1 & \
+		echo $$! > logs/discovery.pid
+	@sleep 2
+	@echo "discovery 已启动 (PID: $$(cat $(DISCOVERY_DIR)/logs/discovery.pid))"
+
+## discovery-stop: 停止 discovery 服务
+discovery-stop:
+	@echo "停止 discovery 服务..."
+	@if [ -f "$(DISCOVERY_DIR)/logs/discovery.pid" ]; then \
+		kill $$(cat $(DISCOVERY_DIR)/logs/discovery.pid) 2>/dev/null; \
+		rm $(DISCOVERY_DIR)/logs/discovery.pid; \
+		echo "discovery 已停止"; \
+	else \
+		echo "discovery 未运行"; \
+	fi
+
+## discovery-status: 查看 discovery 状态
+discovery-status:
+	@if [ -f "$(DISCOVERY_DIR)/logs/discovery.pid" ]; then \
+		if ps -p $$(cat $(DISCOVERY_DIR)/logs/discovery.pid) > /dev/null 2>&1; then \
+			echo "discovery: 运行中 (PID: $$(cat $(DISCOVERY_DIR)/logs/discovery.pid))"; \
+		else \
+			echo "discovery: 已停止"; \
+		fi \
+	else \
+		echo "discovery: 未启动"; \
+	fi
+	@if lsof -i :7171 > /dev/null 2>&1; then \
+		echo "端口 7171: 被占用"; \
+	else \
+		echo "端口 7171: 空闲"; \
+	fi
+
+## discovery-logs: 查看 discovery 日志
+discovery-logs:
+	@if [ -f "$(DISCOVERY_DIR)/logs/discovery.log" ]; then \
+		tail -f $(DISCOVERY_DIR)/logs/discovery.log; \
+	else \
+		echo "discovery 日志文件不存在"; \
+	fi
+
 ## help: 显示帮助信息
 help:
 	@echo "GoIM Chat Makefile 使用说明"
@@ -156,6 +231,13 @@ help:
 	@echo "编译命令:"
 	@echo "  make build           - 编译所有服务"
 	@echo "  make clean           - 清理编译文件"
+	@echo ""
+	@echo "服务发现 (Discovery):"
+	@echo "  make discovery-setup    - 安装 discovery 服务"
+	@echo "  make discovery-start    - 启动 discovery 服务"
+	@echo "  make discovery-stop     - 停止 discovery 服务"
+	@echo "  make discovery-status   - 查看 discovery 状态"
+	@echo "  make discovery-logs     - 查看 discovery 日志"
 	@echo ""
 	@echo "服务管理:"
 	@echo "  make start           - 启动所有服务"
@@ -183,8 +265,9 @@ help:
 	@echo "  make web-build       - 编译前端"
 	@echo ""
 	@echo "快速启动:"
-	@echo "  1. make docker-up    # 启动依赖服务"
-	@echo "  2. make db-init      # 初始化数据库"
-	@echo "  3. make build        # 编译服务"
-	@echo "  4. make start        # 启动服务"
-	@echo "  5. make status       # 检查状态"
+	@echo "  1. make discovery-start  # 启动服务发现"
+	@echo "  2. make docker-up        # 启动依赖服务"
+	@echo "  3. make db-init          # 初始化数据库"
+	@echo "  4. make build            # 编译服务"
+	@echo "  5. make start            # 启动服务"
+	@echo "  6. make status           # 检查状态"
