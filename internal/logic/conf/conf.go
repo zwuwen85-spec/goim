@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bilibili/discovery/naming"
@@ -18,6 +19,7 @@ var (
 	zone      string
 	deployEnv string
 	host      string
+	addrs     string
 	weight    int64
 
 	// Conf config
@@ -27,6 +29,7 @@ var (
 func init() {
 	var (
 		defHost, _   = os.Hostname()
+		defAddrs     = os.Getenv("ADDRS")
 		defWeight, _ = strconv.ParseInt(os.Getenv("WEIGHT"), 10, 32)
 	)
 	flag.StringVar(&confPath, "conf", "logic-example.toml", "default config path")
@@ -34,6 +37,7 @@ func init() {
 	flag.StringVar(&zone, "node.zone", os.Getenv("ZONE"), "avaliable zone. or use ZONE env variable, value: sh001/sh002 etc.")
 	flag.StringVar(&deployEnv, "node.deploy.env", os.Getenv("DEPLOY_ENV"), "deploy env. or use DEPLOY_ENV env variable, value: dev/fat1/uat/pre/prod etc.")
 	flag.StringVar(&host, "node.host", defHost, "machine hostname. or use default machine hostname.")
+	flag.StringVar(&addrs, "node.addrs", defAddrs, "server public ip addrs. or use ADDRS env variable, value: 127.0.0.1 etc.")
 	flag.Int64Var(&weight, "node.weight", defWeight, "load balancing weight, or use WEIGHT env variable, value: 10 etc.")
 }
 
@@ -47,7 +51,7 @@ func Init() (err error) {
 // Default new a config with specified defualt value.
 func Default() *Config {
 	return &Config{
-		Env:       &Env{Region: region, Zone: zone, DeployEnv: deployEnv, Host: host, Weight: weight},
+		Env:       &Env{Region: region, Zone: zone, DeployEnv: deployEnv, Host: host, Weight: weight, Addrs: strings.Split(addrs, ",")},
 		Discovery: &naming.Config{Region: region, Zone: zone, Env: deployEnv, Host: host},
 		HTTPServer: &HTTPServer{
 			Network:      "tcp",
@@ -90,6 +94,7 @@ type Env struct {
 	Zone      string
 	DeployEnv string
 	Host      string
+	Addrs     []string
 	Weight    int64
 }
 

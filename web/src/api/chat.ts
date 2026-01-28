@@ -153,6 +153,9 @@ export interface AIMessage {
   content: string
   timestamp?: number
   seq?: number
+  streaming?: boolean
+  error?: boolean
+  msgId?: string
 }
 
 // Auth API
@@ -305,6 +308,70 @@ export const aiApi = {
     bot_id: number
     message: string
   }) => api.post('/ai/chat/send', data),
+
+  // Stream message API
+  streamMessage: async (data: {
+    bot_id: number
+    message: string
+  }, onChunk: (chunk: string) => void, onDone: (fullContent: string, msgId: string) => void, onError: (error: string) => void): Promise<void> => {
+    const token = sessionStorage.getItem('token')
+
+    try {
+      const response = await fetch('/api/ai/chat/stream', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(data)
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('No response body')
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+
+        // Process SSE messages
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data:')) {
+            try {
+              const data = JSON.parse(line.slice(5).trim())
+
+              if (data.type === 'chunk') {
+                onChunk(data.delta)
+              } else if (data.type === 'done') {
+                onDone(data.content, data.msg_id)
+              } else if (data.type === 'error') {
+                onError(data.message || 'Unknown error')
+              }
+            } catch (e) {
+              console.error('Failed to parse SSE data:', line, e)
+            }
+          }
+        }
+      }
+    } catch (error: any) {
+      onError(error.message || 'Stream failed')
+      throw error
+    }
+  },
 
   getConversations: () => api.get('/ai/chat')
 }
