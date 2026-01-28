@@ -48,7 +48,7 @@
           v-for="(msg, index) in botMessages"
           :key="index"
           class="message"
-          :class="{ 'is-user': msg.role === 'user' }"
+          :class="{ 'is-user': msg.role === 'user', 'streaming': msg.streaming, 'error': msg.error }"
         >
           <el-avatar v-if="msg.role === 'assistant'" :size="32" :style="{ backgroundColor: getBotColor(aiStore.currentBot!.id) }">
             <el-icon><ChatDotRound /></el-icon>
@@ -57,7 +57,22 @@
             <div class="message-sender">
               {{ msg.role === 'user' ? '我' : aiStore.currentBot?.name }}
             </div>
-            <div class="message-body">{{ msg.content }}</div>
+            <div class="message-body">
+              <template v-if="msg.streaming && !msg.content">
+                <div class="typing">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+              </template>
+              <template v-else-if="msg.role === 'assistant'">
+                <MarkdownRenderer :content="msg.content" />
+                <span v-if="msg.streaming" class="cursor"></span>
+              </template>
+              <template v-else>
+                {{ msg.content }}
+              </template>
+            </div>
             <div v-if="msg.timestamp" class="message-time">
               {{ formatTime(msg.timestamp) }}
             </div>
@@ -114,6 +129,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAIStore } from '../store/ai'
 import { useUserStore } from '../store/user'
 import type { AIBot } from '../api/chat'
+import MarkdownRenderer from './MarkdownRenderer.vue'
 
 const aiStore = useAIStore()
 const userStore = useUserStore()
@@ -185,7 +201,8 @@ const handleSend = async () => {
   messageInput.value = ''
 
   try {
-    await aiStore.sendMessage(aiStore.currentBot.id, userMessage)
+    // Use streaming send for better UX
+    await aiStore.streamMessage(aiStore.currentBot.id, userMessage)
     await nextTick()
     scrollToBottom()
   } catch (error: any) {
@@ -363,6 +380,34 @@ onMounted(async () => {
 
 .message.is-user .message-time {
   text-align: right;
+}
+
+.message.streaming .message-body {
+  position: relative;
+}
+
+.cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: #409EFF;
+  margin-left: 2px;
+  animation: blink 1s infinite;
+  vertical-align: text-bottom;
+}
+
+@keyframes blink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0;
+  }
+}
+
+.message.error .message-body {
+  background: #fef0f0;
+  color: #f56c6c;
 }
 
 .typing {

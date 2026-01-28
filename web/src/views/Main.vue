@@ -543,7 +543,8 @@ const handleAvatarClick = (userId: number) => {
 const handleSendMessage = async (content: string) => {
   if (activeSessionType.value === 'ai') {
     if (aiStore.currentBot) {
-      await aiStore.sendMessage(aiStore.currentBot.id, content)
+      // Use streaming for AI messages
+      await aiStore.streamMessage(aiStore.currentBot.id, content)
     }
   } else {
     // Private or Group

@@ -166,7 +166,7 @@ export const useAIStore = defineStore('ai', () => {
     if (!messages.value[botId]) {
       messages.value[botId] = []
     }
-    
+
     const newMsgs = [...(messages.value[botId] || []), userMsg]
     messages.value = { ...messages.value, [botId]: newMsgs }
     saveMessagesToStorage()
@@ -184,7 +184,7 @@ export const useAIStore = defineStore('ai', () => {
           content: (response as any).data.reply,
           timestamp: Date.now()
         }
-        
+
         const updatedMsgs = [...(messages.value[botId] || []), aiMsg]
         messages.value = { ...messages.value, [botId]: updatedMsgs }
         saveMessagesToStorage()
@@ -192,9 +192,9 @@ export const useAIStore = defineStore('ai', () => {
         // Update conversation list preview with AI reply
         const chatStore = useChatStore()
         chatStore.updateConversation(
-          botId, 
-          3, 
-          aiMsg.content, 
+          botId,
+          3,
+          aiMsg.content,
           new Date().toISOString()
         )
 
@@ -203,6 +203,94 @@ export const useAIStore = defineStore('ai', () => {
       return null
     } catch (error: any) {
       console.error('Failed to send AI message:', error)
+      throw error
+    } finally {
+      sending.value = false
+    }
+  }
+
+  // Send streaming message to AI
+  const streamMessage = async (botId: number, userMessage: string): Promise<void> => {
+    if (!userMessage.trim()) return
+
+    sending.value = true
+
+    // Add user message (optimistic update)
+    const userMsg: AIMessage = {
+      role: 'user',
+      content: userMessage,
+      timestamp: Date.now()
+    }
+
+    if (!messages.value[botId]) {
+      messages.value[botId] = []
+    }
+
+    // Add user message
+    let newMsgs = [...(messages.value[botId] || []), userMsg]
+    messages.value = { ...messages.value, [botId]: newMsgs }
+    saveMessagesToStorage()
+
+    // Create placeholder for AI response
+    const aiMsg: AIMessage = {
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      streaming: true
+    }
+
+    newMsgs = [...newMsgs, aiMsg]
+    messages.value = { ...messages.value, [botId]: newMsgs }
+
+    try {
+      await aiApi.streamMessage(
+        { bot_id: botId, message: userMessage },
+        // onChunk
+        (chunk: string) => {
+          // Update AI message content incrementally
+          const currentMessages = messages.value[botId] || []
+          const lastMessage = currentMessages[currentMessages.length - 1]
+          if (lastMessage && lastMessage.role === 'assistant') {
+            lastMessage.content += chunk
+            messages.value = { ...messages.value, [botId]: [...currentMessages] }
+          }
+        },
+        // onDone
+        (fullContent: string, msgId: string) => {
+          const currentMessages = messages.value[botId] || []
+          const lastMessage = currentMessages[currentMessages.length - 1]
+          if (lastMessage && lastMessage.role === 'assistant') {
+            lastMessage.content = fullContent
+            lastMessage.streaming = false
+            lastMessage.msgId = msgId
+            messages.value = { ...messages.value, [botId]: [...currentMessages] }
+            saveMessagesToStorage()
+
+            // Update conversation list preview with AI reply
+            const chatStore = useChatStore()
+            chatStore.updateConversation(
+              botId,
+              3,
+              fullContent,
+              new Date().toISOString()
+            )
+          }
+        },
+        // onError
+        (error: string) => {
+          console.error('Stream error:', error)
+          const currentMessages = messages.value[botId] || []
+          const lastMessage = currentMessages[currentMessages.length - 1]
+          if (lastMessage && lastMessage.role === 'assistant') {
+            lastMessage.content = '出错了: ' + error
+            lastMessage.streaming = false
+            lastMessage.error = true
+            messages.value = { ...messages.value, [botId]: [...currentMessages] }
+          }
+        }
+      )
+    } catch (error: any) {
+      console.error('Failed to stream AI message:', error)
       throw error
     } finally {
       sending.value = false
@@ -259,6 +347,7 @@ export const useAIStore = defineStore('ai', () => {
     getBotMessages,
     setCurrentBot,
     sendMessage,
+    streamMessage,
     clearMessages,
     clearAllMessages,
     getBotById,

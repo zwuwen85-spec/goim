@@ -1,18 +1,22 @@
 package ai
 
 import (
+	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
 
 // ConversationContext holds the conversation history for a user with a bot
 type ConversationContext struct {
-	BotID      int64
-	UserID     int64
-	Messages   []Message
-	LastActive time.Time
-	mu         sync.RWMutex
+	BotID        int64
+	UserID       int64
+	Messages     []Message
+	Summary      string          // Compressed conversation summary
+	SummaryCount int             // Number of messages compressed into summary
+	LastActive   time.Time
+	mu           sync.RWMutex
 }
 
 // ContextManager manages AI conversation contexts
@@ -156,4 +160,87 @@ func (cc *ConversationContext) SetMessages(messages []Message) {
 	cc.Messages = make([]Message, len(messages))
 	copy(cc.Messages, messages)
 	cc.LastActive = time.Now()
+}
+
+// ShouldCompress checks if the context needs compression
+func (cc *ConversationContext) ShouldCompress(threshold int) bool {
+	cc.mu.RLock()
+	defer cc.mu.RUnlock()
+
+	return len(cc.Messages) >= threshold
+}
+
+// Compress generates a summary of the conversation and clears old messages
+func (cc *ConversationContext) Compress(aiService Service, botID int64, personality *Personality) error {
+	cc.mu.Lock()
+	defer cc.mu.Unlock()
+
+	if len(cc.Messages) == 0 {
+		return nil
+	}
+
+	// Build conversation text for summarization
+	var conversationText strings.Builder
+	conversationText.WriteString("请用中文总结以下对话的主要内容（保留关键信息）：\n\n")
+
+	for _, msg := range cc.Messages {
+		role := "用户"
+		if msg.Role == "assistant" {
+			role = "助手"
+		}
+		conversationText.WriteString(fmt.Sprintf("%s: %s\n", role, msg.Content))
+	}
+
+	// Call AI to generate summary
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	summary, err := aiService.Chat(ctx, botID, personality, nil, conversationText.String())
+	if err != nil {
+		return fmt.Errorf("failed to generate summary: %w", err)
+	}
+
+	// Store summary and count
+	cc.Summary = summary
+	cc.SummaryCount = len(cc.Messages)
+
+	// Clear messages and keep only summary as a system message
+	cc.Messages = []Message{
+		{
+			Role:    "system",
+			Content: fmt.Sprintf("[对话摘要] %s\n（这是之前对话的摘要，包含 %d 条消息的内容）", summary, cc.SummaryCount),
+		},
+	}
+
+	cc.LastActive = time.Now()
+	return nil
+}
+
+// GetMessagesWithSummary returns messages with summary prepended (if exists)
+func (cc *ConversationContext) GetMessagesWithSummary() []Message {
+	cc.mu.RLock()
+	defer cc.mu.RUnlock()
+
+	result := make([]Message, 0, len(cc.Messages)+1)
+
+	// Add summary as first message if exists
+	if cc.Summary != "" {
+		result = append(result, Message{
+			Role:    "system",
+			Content: fmt.Sprintf("[对话摘要] %s\n（这是之前对话的摘要，包含 %d 条消息的内容）", cc.Summary, cc.SummaryCount),
+		})
+	}
+
+	// Add current messages
+	result = append(result, cc.Messages...)
+
+	return result
+}
+
+// GetTotalMessageCount returns total count including compressed messages
+func (cc *ConversationContext) GetTotalMessageCount() int {
+	cc.mu.RLock()
+	defer cc.mu.RUnlock()
+
+	return cc.SummaryCount + len(cc.Messages)
 }

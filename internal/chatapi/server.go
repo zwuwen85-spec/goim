@@ -11,6 +11,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -219,6 +221,7 @@ func (s *Server) setupRoutes() {
 				ai.DELETE("/bot/:id", handler.Wrap(s.handleDeleteAIBot))
 				ai.GET("/chat", handler.Wrap(s.handleGetAIConversations))
 				ai.POST("/chat/send", handler.Wrap(s.handleSendAIMessage))
+				ai.POST("/chat/stream", s.handleStreamAIMessage)
 			}
 		}
 	}
@@ -236,10 +239,12 @@ func (s *Server) setupRoutes() {
 func (s *Server) Start() error {
 	addr := s.conf.HTTP.Addr
 	s.httpServer = &http.Server{
-		Addr:         addr,
-		Handler:      s.router,
-		ReadTimeout:  time.Duration(s.conf.HTTP.ReadTimeout) * time.Second,
-		WriteTimeout: time.Duration(s.conf.HTTP.WriteTimeout) * time.Second,
+		Addr:              addr,
+		Handler:           s.router,
+		ReadTimeout:       0, // No timeout for streaming
+		ReadHeaderTimeout:  time.Duration(s.conf.HTTP.ReadTimeout) * time.Second,
+		WriteTimeout:      0, // No timeout for streaming
+		IdleTimeout:       120 * time.Second,
 	}
 
 	log.Infof("ChatAPI server starting on %s", addr)
@@ -2138,4 +2143,187 @@ func (s *Server) handleSendAIMessage(c *gin.Context) (interface{}, error) {
 		"user_msg_id": userMsg.MsgID,
 		"ai_msg_id":   aiMsg.MsgID,
 	}, nil
+}
+
+// handleStreamAIMessage handles streaming AI messages via SSE
+func (s *Server) handleStreamAIMessage(c *gin.Context) {
+	ctx := c.Request.Context()
+	userID := middleware.GetUserIDFromGin(c)
+
+	var req struct {
+		BotID   int64  `json:"bot_id"`
+		Message string `json:"message"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.SSEvent("error", err.Error())
+		return
+	}
+
+	if req.Message == "" {
+		c.SSEvent("error", "message is required")
+		return
+	}
+
+	// Get bot personality
+	var personality *ai.Personality
+	personalityKey := ""
+
+	// Check if it's a default bot
+	if req.BotID >= 9000 && req.BotID <= 9999 {
+		personalities := ai.DefaultPersonalities()
+		switch req.BotID {
+		case 9001:
+			personalityKey = "assistant"
+		case 9002:
+			personalityKey = "companion"
+		case 9003:
+			personalityKey = "tutor"
+		case 9004:
+			personalityKey = "creative"
+		}
+		personality = personalities[personalityKey]
+	} else {
+		// Get custom bot
+		bot, err := s.aiDAO.FindBotByID(ctx, req.BotID)
+		if err != nil || bot == nil {
+			c.SSEvent("error", "bot not found")
+			return
+		}
+		parsed, err := ai.ParsePersonality(bot.Personality)
+		if err != nil {
+			c.SSEvent("error", "invalid personality config")
+			return
+		}
+		personality = parsed
+	}
+
+	if personality == nil {
+		c.SSEvent("error", "bot personality not found")
+		return
+	}
+
+	// Get conversation context
+	convCtx := s.aiContextMgr.GetContext(req.BotID, userID)
+
+	// Check if compression is needed (if messages exceed 20)
+	if convCtx.ShouldCompress(20) {
+		if err := convCtx.Compress(s.aiBotManager.GetService(), req.BotID, personality); err != nil {
+			log.Errorf("Failed to compress context: %v", err)
+		}
+	}
+
+	// Get message history
+	history := convCtx.GetRecentMessages(10)
+
+	// Set SSE headers
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("Transfer-Encoding", "chunked")
+
+	// Save user message first
+	userMsg := &model.Message{
+		FromUserID:       userID,
+		ConversationID:   req.BotID,
+		ConversationType: model.ConversationTypeAI,
+		MsgType:          model.MsgTypeText,
+		Content:          req.Message,
+		Seq:              0,
+	}
+	seq, err := s.messageDAO.GetNextSeq(ctx, req.BotID, model.ConversationTypeAI)
+	if err == nil {
+		userMsg.Seq = seq
+	}
+	if err := s.messageDAO.CreateMessage(ctx, userMsg); err != nil {
+		log.Errorf("Failed to save user AI message: %v", err)
+	}
+
+	// Send user message confirmation (direct JSON with data: prefix)
+	c.Writer.Write([]byte("data: "))
+	jsonData, _ := json.Marshal(map[string]interface{}{
+		"type":   "user_message",
+		"msg_id": userMsg.MsgID,
+		"seq":    userMsg.Seq,
+	})
+	c.Writer.Write(jsonData)
+	c.Writer.Write([]byte("\n\n"))
+	if flusher, ok := c.Writer.(http.Flusher); ok {
+		flusher.Flush()
+	}
+
+	// Stream AI response
+	var fullResponse strings.Builder
+	var mu sync.Mutex
+
+	streamCallback := func(chunk string) {
+		mu.Lock()
+		fullResponse.WriteString(chunk)
+		mu.Unlock()
+
+		// Send chunk to client (direct JSON with data: prefix)
+		c.Writer.Write([]byte("data: "))
+		jsonData, _ := json.Marshal(map[string]interface{}{
+			"type":  "chunk",
+			"delta": chunk,
+		})
+		c.Writer.Write(jsonData)
+		c.Writer.Write([]byte("\n\n"))
+
+		// Flush response to client
+		if flusher, ok := c.Writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
+
+	// Call streaming AI
+	if err := s.aiBotManager.StreamChat(ctx, req.BotID, history, req.Message, streamCallback); err != nil {
+		c.Writer.Write([]byte("data: "))
+		jsonData, _ := json.Marshal(map[string]interface{}{
+			"type":    "error",
+			"message": err.Error(),
+		})
+		c.Writer.Write(jsonData)
+		c.Writer.Write([]byte("\n\n"))
+		return
+	}
+
+	// Get full response
+	response := fullResponse.String()
+
+	// Add messages to context
+	convCtx.AddMessage("user", req.Message)
+	convCtx.AddMessage("assistant", response)
+
+	// Save AI response message
+	aiMsg := &model.Message{
+		FromUserID:       req.BotID,
+		ConversationID:   req.BotID,
+		ConversationType: model.ConversationTypeAI,
+		MsgType:          model.MsgTypeText,
+		Content:          response,
+		Seq:              0,
+	}
+	seq, err = s.messageDAO.GetNextSeq(ctx, req.BotID, model.ConversationTypeAI)
+	if err == nil {
+		aiMsg.Seq = seq
+	}
+	if err := s.messageDAO.CreateMessage(ctx, aiMsg); err != nil {
+		log.Errorf("Failed to save AI response message: %v", err)
+	}
+
+	// Send completion message (direct JSON with data: prefix)
+	c.Writer.Write([]byte("data: "))
+	jsonData, _ = json.Marshal(map[string]interface{}{
+		"type":    "done",
+		"msg_id":  aiMsg.MsgID,
+		"seq":     aiMsg.Seq,
+		"content": response,
+	})
+	c.Writer.Write(jsonData)
+	c.Writer.Write([]byte("\n\n"))
+
+	// Final flush
+	if flusher, ok := c.Writer.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }

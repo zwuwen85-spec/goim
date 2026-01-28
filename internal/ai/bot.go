@@ -72,6 +72,16 @@ func (bm *BotManager) Chat(ctx context.Context, botID int64, history []Message, 
 	return bm.service.Chat(ctx, botID, bot.Personality, history, userMessage)
 }
 
+// StreamChat sends a message to a bot and streams the response via callback
+func (bm *BotManager) StreamChat(ctx context.Context, botID int64, history []Message, userMessage string, callback func(chunk string)) error {
+	bot, err := bm.GetBot(botID)
+	if err != nil {
+		return err
+	}
+
+	return bm.service.StreamChat(ctx, botID, bot.Personality, history, userMessage, callback)
+}
+
 // SetService sets the AI service
 func (bm *BotManager) SetService(service Service) {
 	bm.mu.Lock()
