@@ -44,6 +44,7 @@ type Server struct {
 	pushClient      *service.PushClient
 	aiBotManager    *ai.BotManager
 	aiContextMgr    *ai.ContextManager
+	aiFileProcessor *ai.FileProcessor
 }
 
 // NewServer creates a new ChatAPI server
@@ -80,30 +81,8 @@ func NewServer(cfg *conf.Config) (*Server, error) {
 	aiBotManager := ai.NewBotManager(aiConfig)
 	aiContextMgr := ai.NewContextManager(30 * time.Minute)
 
-	// Register default AI bots
-	defaultPersonalities := ai.DefaultPersonalities()
-	for botID, personality := range defaultPersonalities {
-		botIDInt := int64(9000)
-		switch botID {
-		case "assistant":
-			botIDInt = 9001
-		case "companion":
-			botIDInt = 9002
-		case "tutor":
-			botIDInt = 9003
-		case "creative":
-			botIDInt = 9004
-		}
-		bot := &ai.Bot{
-			ID:          botIDInt,
-			UserID:      0, // System bot
-			Name:        personality.Name,
-			Personality: personality,
-			Model:       cfg.AI.Model,
-			Temperature: cfg.AI.Temperature,
-		}
-		aiBotManager.RegisterBot(bot)
-	}
+	// Initialize AI file processor for document/image handling
+	aiFileProcessor := ai.NewFileProcessor("./uploads/ai", 10) // 10MB max file size
 
 	// Set gin mode
 	if cfg.HTTP != nil {
@@ -128,9 +107,17 @@ func NewServer(cfg *conf.Config) (*Server, error) {
 		pushClient:      pushClient,
 		aiBotManager:    aiBotManager,
 		aiContextMgr:    aiContextMgr,
+		aiFileProcessor: aiFileProcessor,
 	}
 
 	s.setupRoutes()
+
+	// Load AI bots from database and register default bots if not exist
+	if err := s.loadAIBotsFromDatabase(context.Background(), aiBotManager, aiConfig); err != nil {
+		log.Warningf("Failed to load AI bots from database: %v", err)
+		// Fallback: register default bots in memory
+		s.registerDefaultAIBots(aiBotManager, cfg.AI.Model, cfg.AI.Temperature)
+	}
 
 	return s, nil
 }
@@ -222,6 +209,9 @@ func (s *Server) setupRoutes() {
 				ai.GET("/chat", handler.Wrap(s.handleGetAIConversations))
 				ai.POST("/chat/send", handler.Wrap(s.handleSendAIMessage))
 				ai.POST("/chat/stream", s.handleStreamAIMessage)
+				ai.POST("/chat/multimodal", handler.Wrap(s.handleSendMultimodalAIMessage))
+				ai.POST("/chat/stream/multimodal", s.handleStreamMultimodalAIMessage)
+				ai.POST("/upload", handler.Wrap(s.handleAIFileUpload))
 			}
 		}
 	}
@@ -2325,5 +2315,416 @@ func (s *Server) handleStreamAIMessage(c *gin.Context) {
 	// Final flush
 	if flusher, ok := c.Writer.(http.Flusher); ok {
 		flusher.Flush()
+	}
+}
+
+// loadAIBotsFromDatabase loads AI bots from database and registers them
+func (s *Server) loadAIBotsFromDatabase(ctx context.Context, botManager *ai.BotManager, aiConfig *iconf.AI) error {
+	// Load all bots from database (user_id = 0 for system bots)
+	bots, err := s.aiDAO.FindBotsByUser(ctx, 0)
+	if err != nil {
+		return fmt.Errorf("failed to query bots: %w", err)
+	}
+
+	// If no system bots exist, create default ones in database
+	if len(bots) == 0 {
+		return s.createDefaultAIBotsInDatabase(ctx, botManager, aiConfig)
+	}
+
+	// Register loaded bots
+	for _, botModel := range bots {
+		personality, err := ai.ParsePersonality(botModel.Personality)
+		if err != nil {
+			log.Errorf("Failed to parse personality for bot %d: %v", botModel.BotID, err)
+			continue
+		}
+
+		bot := &ai.Bot{
+			ID:          botModel.BotID,
+			UserID:      botModel.UserID,
+			Name:        botModel.Name,
+			Personality: personality,
+			Model:       botModel.ModelName,
+			Temperature: botModel.Temperature,
+		}
+		botManager.RegisterBot(bot)
+		log.Infof("Registered AI bot from database: %s (ID: %d)", bot.Name, bot.ID)
+	}
+
+	return nil
+}
+
+// createDefaultAIBotsInDatabase creates default AI bots in database
+func (s *Server) createDefaultAIBotsInDatabase(ctx context.Context, botManager *ai.BotManager, aiConfig *iconf.AI) error {
+	defaultPersonalities := ai.DefaultPersonalities()
+
+	defaultBotIDs := map[string]int64{
+		"assistant": 9001,
+		"companion": 9002,
+		"tutor":     9003,
+		"creative":  9004,
+	}
+
+	for personalityKey, personality := range defaultPersonalities {
+		botID := defaultBotIDs[personalityKey]
+		personalityStr, err := ai.PersonalityToString(personality)
+		if err != nil {
+			log.Errorf("Failed to serialize personality: %v", err)
+			continue
+		}
+
+		botModel := &model.AIBot{
+			BotID:       botID,
+			UserID:      0, // System bot
+			Name:        personality.Name,
+			Personality: personalityStr,
+			ModelName:   aiConfig.Model,
+			Temperature: aiConfig.Temperature,
+			MaxTokens:   aiConfig.MaxTokens,
+		}
+
+		if err := s.aiDAO.CreateBot(ctx, botModel); err != nil {
+			log.Errorf("Failed to create default bot %s in database: %v", personality.Name, err)
+			continue
+		}
+
+		// Register in memory
+		bot := &ai.Bot{
+			ID:          botID,
+			UserID:      0,
+			Name:        personality.Name,
+			Personality: personality,
+			Model:       aiConfig.Model,
+			Temperature: aiConfig.Temperature,
+		}
+		botManager.RegisterBot(bot)
+		log.Infof("Created and registered default AI bot: %s (ID: %d)", bot.Name, bot.ID)
+	}
+
+	return nil
+}
+
+// registerDefaultAIBots registers default AI bots in memory only (fallback)
+func (s *Server) registerDefaultAIBots(botManager *ai.BotManager, model string, temperature float64) {
+	defaultPersonalities := ai.DefaultPersonalities()
+
+	defaultBotIDs := map[string]int64{
+		"assistant": 9001,
+		"companion": 9002,
+		"tutor":     9003,
+		"creative":  9004,
+	}
+
+	for personalityKey, personality := range defaultPersonalities {
+		botID := defaultBotIDs[personalityKey]
+		bot := &ai.Bot{
+			ID:          botID,
+			UserID:      0,
+			Name:        personality.Name,
+			Personality: personality,
+			Model:       model,
+			Temperature: temperature,
+		}
+		botManager.RegisterBot(bot)
+		log.Infof("Registered fallback default AI bot: %s (ID: %d)", bot.Name, bot.ID)
+	}
+}
+
+// handleAIFileUpload handles file uploads for AI context
+func (s *Server) handleAIFileUpload(c *gin.Context) (interface{}, error) {
+	userID := middleware.GetUserIDFromGin(c)
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		return nil, fmt.Errorf("no file uploaded: %w", err)
+	}
+
+	processed, err := s.aiFileProcessor.UploadFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to process file: %w", err)
+	}
+
+	log.Infof("User %d uploaded file for AI: %s (size: %d)", userID, processed.OriginalName, processed.Size)
+
+	return gin.H{
+		"file_name": processed.OriginalName,
+		"file_url":  processed.PublicURL,
+		"file_type": processed.ContentType,
+		"is_text":   ai.IsTextFile(processed.OriginalName),
+		"is_image":  ai.IsImageFile(processed.OriginalName),
+		"content":   processed.Content,
+	}, nil
+}
+
+// handleSendMultimodalAIMessage handles AI messages with images/files
+func (s *Server) handleSendMultimodalAIMessage(c *gin.Context) (interface{}, error) {
+	ctx := c.Request.Context()
+	userID := middleware.GetUserIDFromGin(c)
+
+	var req struct {
+		BotID    int64    `json:"bot_id" binding:"required"`
+		Message  string   `json:"message"`
+		ImageURLs []string `json:"image_urls"`
+		FileURLs []string `json:"file_urls"` // For text files
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return nil, fmt.Errorf("invalid request: %w", err)
+	}
+
+	if req.Message == "" && len(req.ImageURLs) == 0 && len(req.FileURLs) == 0 {
+		return nil, fmt.Errorf("message or images/files required")
+	}
+
+	// Get bot personality
+	personality, err := s.getBotPersonality(ctx, req.BotID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get conversation context
+	convCtx := s.aiContextMgr.GetContext(req.BotID, userID)
+
+	// Check if compression is needed
+	if convCtx.ShouldCompress(20) {
+		if err := convCtx.Compress(s.aiBotManager.GetService(), req.BotID, personality); err != nil {
+			log.Errorf("Failed to compress context: %v", err)
+		}
+	}
+
+	// Build message with file content if present
+	fullMessage := req.Message
+	if len(req.FileURLs) > 0 {
+		for _, fileURL := range req.FileURLs {
+			content, err := s.aiFileProcessor.ReadFileFromURL(fileURL)
+			if err == nil && content != "" {
+				fullMessage += fmt.Sprintf("\n\n[文件内容]\n%s\n[/文件内容]", content)
+			}
+		}
+	}
+
+	// Get message history
+	history := convCtx.GetRecentMessages(10)
+
+	// Call AI with images if present
+	var response string
+	if len(req.ImageURLs) > 0 {
+		response, err = s.aiBotManager.MultimodalChat(ctx, req.BotID, history, fullMessage, req.ImageURLs)
+	} else {
+		response, err = s.aiBotManager.Chat(ctx, req.BotID, history, fullMessage)
+	}
+	if err != nil {
+		log.Errorf("Failed to call AI service: %v", err)
+		return nil, fmt.Errorf("failed to get AI response: %w", err)
+	}
+
+	// Add messages to context
+	convCtx.AddMessage("user", fullMessage)
+	convCtx.AddMessage("assistant", response)
+
+	// Save messages to database
+	s.saveAIMessages(ctx, userID, req.BotID, req.Message, response)
+
+	return gin.H{
+		"reply": response,
+		"bot_id": req.BotID,
+	}, nil
+}
+
+// handleStreamMultimodalAIMessage handles streaming AI messages with images/files
+func (s *Server) handleStreamMultimodalAIMessage(c *gin.Context) {
+	ctx := c.Request.Context()
+	userID := middleware.GetUserIDFromGin(c)
+
+	var req struct {
+		BotID    int64    `json:"bot_id" binding:"required"`
+		Message  string   `json:"message"`
+		ImageURLs []string `json:"image_urls"`
+		FileURLs []string `json:"file_urls"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.SSEvent("error", err.Error())
+		return
+	}
+
+	if req.Message == "" && len(req.ImageURLs) == 0 && len(req.FileURLs) == 0 {
+		c.SSEvent("error", "message or images/files required")
+		return
+	}
+
+	// Get bot personality
+	personality, err := s.getBotPersonality(ctx, req.BotID)
+	if err != nil {
+		c.SSEvent("error", err.Error())
+		return
+	}
+
+	// Get conversation context
+	convCtx := s.aiContextMgr.GetContext(req.BotID, userID)
+
+	// Check if compression is needed
+	if convCtx.ShouldCompress(20) {
+		if err := convCtx.Compress(s.aiBotManager.GetService(), req.BotID, personality); err != nil {
+			log.Errorf("Failed to compress context: %v", err)
+		}
+	}
+
+	// Build message with file content if present
+	fullMessage := req.Message
+	if len(req.FileURLs) > 0 {
+		for _, fileURL := range req.FileURLs {
+			content, err := s.aiFileProcessor.ReadFileFromURL(fileURL)
+			if err == nil && content != "" {
+				fullMessage += fmt.Sprintf("\n\n[文件内容]\n%s\n[/文件内容]", content)
+			}
+		}
+	}
+
+	// Get message history
+	history := convCtx.GetRecentMessages(10)
+
+	// Set SSE headers
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("Transfer-Encoding", "chunked")
+
+	// Save user message first
+	s.saveAIMessages(ctx, userID, req.BotID, req.Message, "")
+
+	// Stream AI response
+	var fullResponse strings.Builder
+	var mu sync.Mutex
+
+	streamCallback := func(chunk string) {
+		mu.Lock()
+		fullResponse.WriteString(chunk)
+		mu.Unlock()
+
+		c.Writer.Write([]byte("data: "))
+		jsonData, _ := json.Marshal(map[string]interface{}{
+			"type":  "chunk",
+			"delta": chunk,
+		})
+		c.Writer.Write(jsonData)
+		c.Writer.Write([]byte("\n\n"))
+
+		if flusher, ok := c.Writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
+
+	// Call streaming AI
+	if len(req.ImageURLs) > 0 {
+		err = s.aiBotManager.StreamMultimodalChat(ctx, req.BotID, history, fullMessage, req.ImageURLs, streamCallback)
+	} else {
+		err = s.aiBotManager.StreamChat(ctx, req.BotID, history, fullMessage, streamCallback)
+	}
+
+	if err != nil {
+		c.Writer.Write([]byte("data: "))
+		jsonData, _ := json.Marshal(map[string]interface{}{
+			"type":    "error",
+			"message": err.Error(),
+		})
+		c.Writer.Write(jsonData)
+		c.Writer.Write([]byte("\n\n"))
+		return
+	}
+
+	// Get full response
+	response := fullResponse.String()
+
+	// Add messages to context
+	convCtx.AddMessage("user", fullMessage)
+	convCtx.AddMessage("assistant", response)
+
+	// Save AI response
+	s.saveAIMessages(ctx, userID, req.BotID, "", response)
+
+	// Send completion message
+	c.Writer.Write([]byte("data: "))
+	jsonData, _ := json.Marshal(map[string]interface{}{
+		"type":    "done",
+		"content": response,
+	})
+	c.Writer.Write(jsonData)
+	c.Writer.Write([]byte("\n\n"))
+
+	if flusher, ok := c.Writer.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// getBotPersonality gets personality for a bot ID
+func (s *Server) getBotPersonality(ctx context.Context, botID int64) (*ai.Personality, error) {
+	// Check if it's a default bot
+	if botID >= 9000 && botID <= 9999 {
+		personalityKey := ""
+		switch botID {
+		case 9001:
+			personalityKey = "assistant"
+		case 9002:
+			personalityKey = "companion"
+		case 9003:
+			personalityKey = "tutor"
+		case 9004:
+			personalityKey = "creative"
+		}
+		personalities := ai.DefaultPersonalities()
+		if personality, ok := personalities[personalityKey]; ok {
+			return personality, nil
+		}
+	}
+
+	// Get from database
+	bot, err := s.aiDAO.FindBotByID(ctx, botID)
+	if err != nil || bot == nil {
+		return nil, fmt.Errorf("bot not found")
+	}
+
+	personality, err := ai.ParsePersonality(bot.Personality)
+	if err != nil {
+		return nil, fmt.Errorf("invalid personality config: %w", err)
+	}
+
+	return personality, nil
+}
+
+// saveAIMessages saves user and AI messages to database
+func (s *Server) saveAIMessages(ctx context.Context, userID, botID int64, userMessage, aiResponse string) {
+	if userMessage != "" {
+		userMsg := &model.Message{
+			FromUserID:       userID,
+			ConversationID:   botID,
+			ConversationType: model.ConversationTypeAI,
+			MsgType:          model.MsgTypeText,
+			Content:          userMessage,
+			Seq:              0,
+		}
+		seq, err := s.messageDAO.GetNextSeq(ctx, botID, model.ConversationTypeAI)
+		if err == nil {
+			userMsg.Seq = seq
+		}
+		if err := s.messageDAO.CreateMessage(ctx, userMsg); err != nil {
+			log.Errorf("Failed to save user AI message: %v", err)
+		}
+	}
+
+	if aiResponse != "" {
+		aiMsg := &model.Message{
+			FromUserID:       botID,
+			ConversationID:   botID,
+			ConversationType: model.ConversationTypeAI,
+			MsgType:          model.MsgTypeText,
+			Content:          aiResponse,
+			Seq:              0,
+		}
+		seq, err := s.messageDAO.GetNextSeq(ctx, botID, model.ConversationTypeAI)
+		if err == nil {
+			aiMsg.Seq = seq
+		}
+		if err := s.messageDAO.CreateMessage(ctx, aiMsg); err != nil {
+			log.Errorf("Failed to save AI response message: %v", err)
+		}
 	}
 }

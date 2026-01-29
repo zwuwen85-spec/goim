@@ -156,6 +156,17 @@ export interface AIMessage {
   streaming?: boolean
   error?: boolean
   msgId?: string
+  images?: string[] // For multimodal messages
+  files?: UploadedFile[] // For attached files
+}
+
+export interface UploadedFile {
+  name: string
+  url: string
+  type: string
+  is_text: boolean
+  is_image: boolean
+  content?: string
 }
 
 // Auth API
@@ -373,7 +384,91 @@ export const aiApi = {
     }
   },
 
-  getConversations: () => api.get('/ai/chat')
+  getConversations: () => api.get('/ai/chat'),
+
+  // Upload file for AI context
+  uploadFile: (file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post('/ai/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
+
+  // Send multimodal message (with images/files)
+  sendMultimodalMessage: (data: {
+    bot_id: number
+    message?: string
+    image_urls?: string[]
+    file_urls?: string[]
+  }) => api.post('/ai/chat/multimodal', data),
+
+  // Stream multimodal message
+  streamMultimodalMessage: async (
+    data: {
+      bot_id: number
+      message?: string
+      image_urls?: string[]
+      file_urls?: string[]
+    },
+    onChunk: (chunk: string) => void,
+    onDone: (fullContent: string, msgId: string) => void,
+    onError: (error: string) => void
+  ): Promise<void> => {
+    const token = sessionStorage.getItem('token')
+
+    try {
+      const response = await fetch('/api/ai/chat/stream/multimodal', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(data)
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('No response body')
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data:')) {
+            try {
+              const responseData = JSON.parse(line.slice(5).trim())
+              if (responseData.type === 'chunk') {
+                onChunk(responseData.delta)
+              } else if (responseData.type === 'done') {
+                onDone(responseData.content, responseData.msg_id)
+              } else if (responseData.type === 'error') {
+                onError(responseData.message || 'Unknown error')
+              }
+            } catch (e) {
+              console.error('Failed to parse SSE data:', line, e)
+            }
+          }
+        }
+      }
+    } catch (error: any) {
+      onError(error.message || 'Stream failed')
+      throw error
+    }
+  }
 }
 
 export default api

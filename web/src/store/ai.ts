@@ -297,6 +297,106 @@ export const useAIStore = defineStore('ai', () => {
     }
   }
 
+  // Send streaming multimodal message to AI
+  const streamMultimodalMessage = async (botId: number, userMessage: string, imageUrls: string[], fileUrls: string[]): Promise<void> => {
+    sending.value = true
+
+    // Add user message (optimistic update)
+    const userMsg: AIMessage = {
+      role: 'user',
+      content: userMessage,
+      timestamp: Date.now()
+    }
+
+    if (imageUrls.length > 0) {
+      userMsg.images = imageUrls
+    }
+
+    if (fileUrls.length > 0) {
+      // Store file URLs for reference
+      userMsg.files = fileUrls.map(url => ({
+        name: 'File',
+        url: url,
+        type: 'text/plain',
+        is_text: true,
+        is_image: false
+      }))
+    }
+
+    if (!messages.value[botId]) {
+      messages.value[botId] = []
+    }
+
+    // Add user message
+    let newMsgs = [...(messages.value[botId] || []), userMsg]
+    messages.value = { ...messages.value, [botId]: newMsgs }
+    saveMessagesToStorage()
+
+    // Create placeholder for AI response
+    const aiMsg: AIMessage = {
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      streaming: true
+    }
+
+    newMsgs = [...newMsgs, aiMsg]
+    messages.value = { ...messages.value, [botId]: newMsgs }
+
+    try {
+      await aiApi.streamMultimodalMessage(
+        { bot_id: botId, message: userMessage, image_urls: imageUrls, file_urls: fileUrls },
+        // onChunk
+        (chunk: string) => {
+          const currentMessages = messages.value[botId] || []
+          const lastMessage = currentMessages[currentMessages.length - 1]
+          if (lastMessage && lastMessage.role === 'assistant') {
+            lastMessage.content += chunk
+            messages.value = { ...messages.value, [botId]: [...currentMessages] }
+          }
+        },
+        // onDone
+        (fullContent: string, msgId: string) => {
+          const currentMessages = messages.value[botId] || []
+          const lastMessage = currentMessages[currentMessages.length - 1]
+          if (lastMessage && lastMessage.role === 'assistant') {
+            lastMessage.content = fullContent
+            lastMessage.streaming = false
+            lastMessage.msgId = msgId
+            messages.value = { ...messages.value, [botId]: [...currentMessages] }
+            saveMessagesToStorage()
+
+            // Update conversation list preview with AI reply
+            const chatStore = useChatStore()
+            chatStore.updateConversation(
+              botId,
+              3,
+              fullContent,
+              new Date().toISOString()
+            )
+          }
+        },
+        // onError
+        (error: string) => {
+          console.error('Stream error:', error)
+          const currentMessages = messages.value[botId] || []
+          const lastMessage = currentMessages[currentMessages.length - 1]
+          if (lastMessage && lastMessage.role === 'assistant') {
+            lastMessage.content = '出错了: ' + error
+            lastMessage.streaming = false
+            lastMessage.error = true
+            messages.value = { ...messages.value, [botId]: [...currentMessages] }
+          }
+        }
+      )
+    } catch (error: any) {
+      console.error('Failed to stream AI message:', error)
+      throw error
+    } finally {
+      sending.value = false
+    }
+  }
+
   // Clear messages for a bot
   const clearMessages = (botId: number) => {
     messages.value = { ...messages.value, [botId]: [] }
@@ -348,10 +448,12 @@ export const useAIStore = defineStore('ai', () => {
     setCurrentBot,
     sendMessage,
     streamMessage,
+    streamMultimodalMessage,
     clearMessages,
     clearAllMessages,
     getBotById,
     loadMoreMessages,
-    loadMessagesFromStorage
+    loadMessagesFromStorage,
+    saveMessagesToStorage
   }
 })

@@ -18,6 +18,15 @@ type Personality struct {
 type Message struct {
 	Role    string `json:"role"`    // user, assistant, system
 	Content string `json:"content"`
+	// Images represents optional image URLs for multimodal input
+	Images  []string `json:"images,omitempty"`
+}
+
+// ContentPart represents a part in a multimodal message (for vision models)
+type ContentPart struct {
+	Type     string `json:"type"`     // "text" or "image_url"
+	Text     string `json:"text,omitempty"`
+	ImageURL string `json:"image_url,omitempty"`
 }
 
 // Service is the AI service interface
@@ -25,8 +34,14 @@ type Service interface {
 	// Chat sends a message to the AI and returns the response
 	Chat(ctx context.Context, botID int64, personality *Personality, history []Message, userMessage string) (string, error)
 
+	// MultimodalChat sends a message with images to the AI and returns the response
+	MultimodalChat(ctx context.Context, botID int64, personality *Personality, history []Message, userMessage string, imageUrls []string) (string, error)
+
 	// StreamChat streams the AI response
 	StreamChat(ctx context.Context, botID int64, personality *Personality, history []Message, userMessage string, callback func(chunk string)) error
+
+	// StreamMultimodalChat streams the AI response with images support
+	StreamMultimodalChat(ctx context.Context, botID int64, personality *Personality, history []Message, userMessage string, imageUrls []string, callback func(chunk string)) error
 
 	// SetModel sets the AI model to use
 	SetModel(model string)

@@ -72,6 +72,16 @@ func (bm *BotManager) Chat(ctx context.Context, botID int64, history []Message, 
 	return bm.service.Chat(ctx, botID, bot.Personality, history, userMessage)
 }
 
+// MultimodalChat sends a message with images to a bot and returns the response
+func (bm *BotManager) MultimodalChat(ctx context.Context, botID int64, history []Message, userMessage string, imageUrls []string) (string, error) {
+	bot, err := bm.GetBot(botID)
+	if err != nil {
+		return "", err
+	}
+
+	return bm.service.MultimodalChat(ctx, botID, bot.Personality, history, userMessage, imageUrls)
+}
+
 // StreamChat sends a message to a bot and streams the response via callback
 func (bm *BotManager) StreamChat(ctx context.Context, botID int64, history []Message, userMessage string, callback func(chunk string)) error {
 	bot, err := bm.GetBot(botID)
@@ -80,6 +90,16 @@ func (bm *BotManager) StreamChat(ctx context.Context, botID int64, history []Mes
 	}
 
 	return bm.service.StreamChat(ctx, botID, bot.Personality, history, userMessage, callback)
+}
+
+// StreamMultimodalChat sends a message with images to a bot and streams the response via callback
+func (bm *BotManager) StreamMultimodalChat(ctx context.Context, botID int64, history []Message, userMessage string, imageUrls []string, callback func(chunk string)) error {
+	bot, err := bm.GetBot(botID)
+	if err != nil {
+		return err
+	}
+
+	return bm.service.StreamMultimodalChat(ctx, botID, bot.Personality, history, userMessage, imageUrls, callback)
 }
 
 // SetService sets the AI service

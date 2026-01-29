@@ -119,7 +119,9 @@
             :get-sender-name="getSenderName"
             :get-sender-avatar="getSenderAvatar"
             :get-sender-style="getSenderStyle"
+            :is-ai-chat="activeSessionType === 'ai'"
             @send="handleSendMessage"
+            @send-multimodal="handleSendMultimodal"
             @load-more="handleLoadMore"
             @avatar-click="handleAvatarClick"
           >
@@ -429,6 +431,11 @@ const handleConversationSelect = async (conv: any) => {
     const roomId = `group://${conv.target_id}`
     console.log('[Main] Opening group chat, joining room:', roomId)
     changeRoom(roomId)
+  } else if (activeSessionType.value === 'private') {
+    // Join the private chat room to receive messages
+    const roomId = `private:${conv.target_id}`
+    console.log('[Main] Opening private chat, joining room:', roomId)
+    changeRoom(roomId)
   }
 
   // Ensure sidebar switches to 'chats' if we are in search or other tabs, 
@@ -458,6 +465,11 @@ const handleFriendChat = (friend: any) => {
   chatStore.openChat(userId, 1, friend.remark || friend.friend_user?.nickname, parseSqlNullString(friend.friend_user?.avatar))
   activeTab.value = 'chats' // Switch to chat tab
 
+  // Join private chat room for real-time messages
+  const roomId = `private:${userId}`
+  console.log('[Main] Joining private room:', roomId)
+  changeRoom(roomId)
+
   console.log('after handleFriendChat, activeSessionType:', activeSessionType.value, 'showGroupSidebar:', showGroupSidebar.value)
 }
 
@@ -485,6 +497,11 @@ const handleStartChatFromProfile = (userId: number) => {
     friend ? parseSqlNullString(friend.friend_user?.avatar) : undefined
   )
   activeTab.value = 'chats'
+
+  // Join private chat room for real-time messages
+  const roomId = `private:${userId}`
+  console.log('[Main] Joining private room:', roomId)
+  changeRoom(roomId)
 }
 
 const handleGroupSelect = async (group: any) => {
@@ -513,18 +530,19 @@ const handleGroupSelect = async (group: any) => {
 }
 
 const handleBotSelect = (bot: any) => {
-  console.log('handleBotSelect')
-
-  activeSessionType.value = 'ai'
+  // Close sidebar
   showGroupSidebar.value = false
-  aiStore.setCurrentBot(bot)
-  
-  // Add to conversation list
-  chatStore.openChat(bot.id, 3, bot.name)
-  
-  activeTab.value = 'chats' // Switch to chat tab
 
-  console.log('after handleBotSelect, activeSessionType:', activeSessionType.value, 'showGroupSidebar:', showGroupSidebar.value)
+  // Set AI bot FIRST
+  aiStore.setCurrentBot(bot)
+
+  // Set session type BEFORE openChat to prevent ChatWindow remount
+  activeSessionType.value = 'ai'
+
+  // Then add to conversation list
+  chatStore.openChat(bot.id, 3, bot.name)
+
+  activeTab.value = 'chats' // Switch to chat tab
 }
 
 const toggleGroupSidebar = () => {
@@ -550,6 +568,12 @@ const handleSendMessage = async (content: string) => {
     // Private or Group
     const type = activeSessionType.value === 'group' ? 2 : 1
     await chatStore.sendMessage(JSON.stringify({ text: content }), type)
+  }
+}
+
+const handleSendMultimodal = async (data: { message: string, imageUrls: string[], fileUrls: string[] }) => {
+  if (activeSessionType.value === 'ai' && aiStore.currentBot) {
+    await aiStore.streamMultimodalMessage(aiStore.currentBot.id, data.message, data.imageUrls, data.fileUrls)
   }
 }
 
@@ -897,7 +921,6 @@ watch(activeSessionType, (newType, oldType) => {
   // Close sidebar when switching to non-group chat
   if (newType !== 'group') {
     showGroupSidebar.value = false
-    console.log('auto-close sidebar because newType is not group')
   }
 })
 
